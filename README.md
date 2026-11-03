@@ -1,15 +1,12 @@
-# Hamle. — Satranç analiz yardımcısı
+# Exlives chessbot
 
-Başka bir sitedeki tahtayı analiz etmek için [`extension`](extension/README.md) klasöründeki Chrome/Edge uzantısını yükleyin. Chess.com ve Lichess'in 2B tahtasını okur ve önerilen hamleyi gösterir.
+Chess.com ve Lichess oyunlarında satranç tahtasını okuyup hamle önerisi gösteren Chrome/Edge uzantısıdır.
 
-## Kendi tahtasında botla oyna
+## Kurulum
 
-Uygulamayı `index.html` dosyasını bir web sunucusu üzerinden açarak çalıştırın. Örneğin proje klasöründe:
+1. Chrome'da `chrome://extensions`, Edge'de `edge://extensions` sayfasını açın.
+2. **Geliştirici modu**nu etkinleştirin.
+3. **Paketlenmemiş öğe yükle** seçeneğine tıklayın ve bu depodaki `extension` klasörünü seçin.
+4. Chess.com veya Lichess oyununu açıp uzantı simgesine tıklayın.
 
-```sh
-python -m http.server 8000
-```
-
-Ardından `http://localhost:8000` adresine gidin. Satranç kuralları için `chess.js` kütüphanesi `esm.sh` üzerinden yüklenir; ilk açılışta internet bağlantısı gerekir.
-
-Taş rengini ve bot seviyesini seçin. Taşa, ardından hedef kareye tıklayarak oynayın. Bot yasal hamleleri alpha-beta aramasıyla değerlendirip otomatik oynar. Terfi hamlelerinde taş seçebilirsiniz; “↶” son turu (senin ve botun hamlelerini) geri alır.
+Özellikler ve kullanım ayrıntıları için [uzantı README'sine](extension/README.md) bakın.
