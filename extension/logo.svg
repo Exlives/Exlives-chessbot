@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Exlives chessbot satranç atı logosu">
+  <defs>
+    <linearGradient id="bg" x1="14" y1="12" x2="112" y2="118" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e5ff9a"/>
+      <stop offset="1" stop-color="#c2ee5b"/>
+    </linearGradient>
+    <linearGradient id="piece" x1="39" y1="28" x2="91" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#263b31"/>
+      <stop offset="1" stop-color="#101918"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg)"/>
+  <path d="M31 104h68v-9H88l-3-13 10-9c4-4 5-10 2-15l-9-13 4-16-13-9-9 14-15-2-14 10-12 17 10 10 14-3 8 8-8 14H44c-8 0-13 5-13 13v6Z" fill="url(#piece)"/>
+  <path d="m47 55 8-11 13 2 7-10 8 6-3 12 8 11-7 7-13-5-8 8-12-3-7-9Z" fill="#d5fa79" opacity=".95"/>
+  <circle cx="74" cy="49" r="3.4" fill="#17251e"/>
+  <path d="M44 91h43" fill="none" stroke="#d5fa79" stroke-linecap="round" stroke-width="3" opacity=".9"/>
+  <path d="M28 111h72" stroke="#17251e" stroke-linecap="round" stroke-width="5" opacity=".16"/>
+</svg>

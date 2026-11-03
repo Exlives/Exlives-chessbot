@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="logo.svg"><link rel="stylesheet" href="popup.css"><title>Exlives chessbot</title>
+</head>
+<body>
+  <main>
+    <header><div class="mark"><img src="logo.svg" alt=""></div><div><b>Exlives chessbot</b><small>SATRANÇ TAHTA ANALİZİ</small></div><button id="mini-toggle" class="mini-toggle" title="Küçük pencere" aria-label="Küçük pencere">↗</button><button id="close-app" class="close-app" title="Uygulamayı kapat" aria-label="Uygulamayı kapat">×</button></header>
+    <div class="intro">Açık satranç tahtası için öneri</div>
+    <div class="settings-row">
+      <div><label for="own-color">Senin taşlarının rengi</label>
+        <select id="own-color"><option value="" selected>Rengini seç</option><option value="w">Beyaz taşlarım</option><option value="b">Siyah taşlarım</option></select></div>
+      <div><label for="depth">Analiz derinliği</label>
+        <select id="depth"><option value="8">Hızlı</option><option value="12">Dengeli</option><option value="16" selected>Derin</option></select></div>
+    </div>
+    <button id="live-toggle" class="live-toggle" type="button" aria-pressed="true"><span class="toggle-dot"></span>Ekran izleme: Açık</button>
+    <div class="actions-row">
+      <button id="analyze">Şimdi analiz et <span>→</span></button>
+      <button id="new-game" type="button">Yeni oyun</button>
+    </div>
+    <section id="result" class="result">Chess.com veya Lichess oyun sekmesini açıp analiz et.</section>
+    <button id="show-on-board" class="show-on-board" type="button">Tahtada oku göster ↗</button>
+    <section id="board-preview" class="board-preview" hidden>
+      <img id="board-image" alt="Analiz edilen satranç tahtası">
+      <svg id="move-arrow" viewBox="0 0 1000 1000" aria-hidden="true">
+        <defs><marker id="arrow-head" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" fill="#dcff72" /></marker></defs>
+        <line id="arrow-line" x1="0" y1="0" x2="0" y2="0" marker-end="url(#arrow-head)" />
+        <circle id="arrow-origin" cx="0" cy="0" r="28" />
+      </svg>
+    </section>
+    <p class="note">İzleme açıkken tahtayı otomatik takip eder. Kapalıyken yalnızca “Şimdi analiz et” düğmesine bastığında okur. İki durumda da yalnızca senin rengin için ipucu verir.</p>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+*{box-sizing:border-box}
+body{margin:0;width:min(480px,calc(100vw - 24px));min-height:400px;background:#101918;color:#f1f3e9;font:14px 'Segoe UI',sans-serif}
+main{padding:24px}
+header{display:flex;gap:10px;align-items:center}
+.mark{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;background:#d5fa79;color:#172015;font-size:25px}
+.mark img{display:block;width:100%;height:100%;border-radius:inherit}
+header b{display:block;font-size:20px;letter-spacing:-.7px}
+header b span{color:#d5fa79}
+header small{display:block;margin-top:2px;font-size:8px;letter-spacing:1.5px;color:#93a197}
+.close-app{margin:0 0 0 auto;width:32px;height:32px;border:1px solid #35443f;border-radius:8px;background:#202c29;color:#bdc8bf;font-size:23px;line-height:1;cursor:pointer}
+.mini-toggle{margin-left:auto;width:32px;height:32px;border:1px solid #35443f;border-radius:8px;background:#202c29;color:#bdc8bf;font-size:17px;cursor:pointer}
+.mini-toggle:hover,.close-app:hover{background:#32413b;color:#fff}
+.close-app{margin-left:0}
+.intro{font-size:19px;font-weight:650;margin:22px 0 16px}
+label{display:block;font-size:12px;color:#bac4bb;margin:12px 0 7px}
+select{width:100%;height:40px;padding:0 10px;border:1px solid #35443f;border-radius:7px;background:#202c29;color:#edf0e8}
+.live-toggle{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:36px;border:1px solid #35443f;border-radius:7px;background:#202c29;color:#b6c1b8;font-size:12px;margin-top:14px;cursor:pointer}
+.live-toggle.is-on{color:#d5fa79;border-color:#596a45;background:#263326}
+.toggle-dot{width:7px;height:7px;border-radius:50%;background:#718078}
+.live-toggle.is-on .toggle-dot{background:#d5fa79;box-shadow:0 0 8px #d5fa79a0}
+.show-on-board{width:100%;height:38px;margin-top:9px;border:1px solid #43534a;border-radius:8px;background:#1d2925;color:#d8e2d8;font-weight:650;cursor:pointer}
+.show-on-board:hover{background:#2a3932;color:#d5fa79}
+ .actions-row{display:flex;gap:8px;margin-top:9px}
+button#analyze{flex:1;width:auto;height:44px;border:0;border-radius:8px;background:#d5fa79;color:#172015;font-weight:700;margin-top:0;cursor:pointer}
+button#analyze span{font-size:17px;margin-left:5px}
+button#new-game{height:44px;padding:0 15px;border:1px solid #405047;border-radius:8px;background:#25322d;color:#e1e8df;font-weight:650;cursor:pointer}
+button#new-game:hover{background:#304039}
+.result{margin-top:12px;min-height:74px;padding:13px;border:1px solid #2d3b35;border-radius:8px;background:#1b2623;color:#bdc8bf;line-height:1.5}
+.result strong{color:#d5fa79}
+.result .san{display:block;font-size:27px;font-weight:750;color:#f1f3e9;margin:4px 0}
+.thinking-line{display:flex;align-items:center;gap:8px;color:#d5fa79;font-weight:650;margin-bottom:5px}
+.spinner{width:14px;height:14px;border:2px solid #637354;border-top-color:#d5fa79;border-radius:50%;animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.opponent-move{display:block;color:#d0d9ce;font-size:12px;margin:5px 0}
+.explanation{display:block;margin-top:8px;color:#b7c3b9;font-size:12px;line-height:1.45}
+.board-preview{position:relative;width:100%;aspect-ratio:1;margin-top:14px;border:1px solid #3c4b42;border-radius:8px;overflow:hidden;background:#111}
+.board-preview[hidden]{display:none}
+.board-preview img{display:block;width:100%;height:100%;object-fit:fill}
+.board-preview svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.board-preview line{stroke:#dcff72;stroke-width:12;stroke-linecap:round;opacity:.92;filter:drop-shadow(0 1px 2px #172015)}
+.board-preview circle{fill:#dcff7226;stroke:#dcff72;stroke-width:4}
+.note{font-size:10px;line-height:1.45;color:#849188;margin:12px 1px 0}
+@media(max-height:1000px){main{padding:16px 24px}.intro{font-size:17px;margin:14px 0 10px}.settings-row{display:flex;gap:12px}.settings-row>div{flex:1;min-width:0}label{margin:5px 0 5px}select{height:36px}.live-toggle{height:32px;margin-top:8px}.actions-row{margin-top:6px}button#analyze,button#new-game{height:40px}.result{min-height:56px;margin-top:8px;padding:10px}.result .san{font-size:23px}.show-on-board{height:34px;margin-top:6px}.board-preview{width:100%;margin:10px auto 0}.note{font-size:9px;margin-top:8px}}
+body.mini-mode{width:300px;min-height:0}body.mini-mode main{padding:8px}body.mini-mode header .mark{width:30px;height:30px;font-size:20px}body.mini-mode header b{font-size:17px}body.mini-mode .intro,body.mini-mode label,body.mini-mode .settings-row,body.mini-mode .live-toggle,body.mini-mode #analyze,body.mini-mode #new-game,body.mini-mode .show-on-board,body.mini-mode .board-preview,body.mini-mode .note{display:none}body.mini-mode .result{margin:7px 0 0;min-height:0;max-height:86px;padding:8px;overflow:hidden;font-size:11px}body.mini-mode .result .san{font-size:22px;margin:1px 0}body.mini-mode .result .explanation,body.mini-mode .result .opponent-move{display:none}body.mini-mode .mini-toggle{font-size:0}body.mini-mode .mini-toggle::after{content:'↙';font-size:17px}
