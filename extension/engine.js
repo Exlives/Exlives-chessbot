@@ -1,8 +1,11 @@
 const ENGINE_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.js');
+const WASM_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.wasm');
 
 export class StockfishEngine {
   constructor() {
-    this.worker = new Worker(ENGINE_URL);
+    // Pass the WASM URL explicitly. Stockfish.js reads it from the worker URL
+    // hash; this avoids relying on URL/path inference inside extension workers.
+    this.worker = new Worker(`${ENGINE_URL}#${encodeURIComponent(WASM_URL)}`);
     this.currentSearch = null;
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
@@ -12,7 +15,11 @@ export class StockfishEngine {
     this.worker.onerror = event => {
       event.preventDefault?.();
       const workerError = event.error;
-      const detail = workerError?.message || (typeof workerError === 'string' ? workerError : '') || event.message;
+      let detail = workerError?.message || (typeof workerError === 'string' ? workerError : '') || '';
+      if (!detail && workerError && typeof workerError === 'object') {
+        try { detail = JSON.stringify(workerError); } catch { /* Use the event message below. */ }
+      }
+      detail ||= event.message;
       const error = new Error(detail && detail !== '[object Object]'
         ? `Stockfish worker hatası: ${detail}`
         : 'Stockfish worker hata verdi. Uzantıdaki vendor/stockfish/ dosyalarını kontrol edip uzantıyı yenile.');

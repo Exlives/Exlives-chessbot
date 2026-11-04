@@ -94,7 +94,22 @@ function getBoardPosition(rectHint = null, includeElement = false) {
   // Search open shadow roots too, as some page layouts mount the board there.
   const boards = [...new Set(deepQueryAll(document, 'wc-chess-board, cg-board, .cg-board, [data-cg-type="board"], chess-board, .chess-board, [data-testid*="chessboard"], [data-testid*="chess-board"]'))];
   const candidates = boards.map(board => ({ board, cells: readPieces(board), rect: board.getBoundingClientRect() }))
-    .filter(x => x.cells.size >= 2 && x.rect.width > 120 && x.rect.height > 120)
+    .filter(x => {
+      const ratio = x.rect.width / x.rect.height;
+      const visibleWidth = Math.max(0, Math.min(x.rect.right, window.innerWidth) - Math.max(x.rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(x.rect.bottom, window.innerHeight) - Math.max(x.rect.top, 0));
+      return x.cells.size >= 2 && x.rect.width > 120 && x.rect.height > 120 &&
+        ratio > 0.8 && ratio < 1.2 && visibleWidth > 100 && visibleHeight > 100;
+    })
+    .map(x => {
+      const visibleArea = Math.max(0, Math.min(x.rect.right, window.innerWidth) - Math.max(x.rect.left, 0)) *
+        Math.max(0, Math.min(x.rect.bottom, window.innerHeight) - Math.max(x.rect.top, 0));
+      const centerDistance = Math.hypot(
+        (x.rect.left + x.rect.width / 2) - window.innerWidth / 2,
+        (x.rect.top + x.rect.height / 2) - window.innerHeight / 2
+      );
+      return { ...x, visibleArea, centerDistance };
+    })
     .map(candidate => {
       if (!rectHint) return { ...candidate, overlap: 0 };
       const left = Math.max(candidate.rect.left, rectHint.left);
@@ -105,7 +120,15 @@ function getBoardPosition(rectHint = null, includeElement = false) {
       return { ...candidate, overlap: overlap / (candidate.rect.width * candidate.rect.height) };
     })
     .filter(candidate => !rectHint || candidate.overlap >= 0.2)
-    .sort((a,b) => rectHint ? b.overlap - a.overlap : b.cells.size - a.cells.size || b.rect.width - a.rect.width);
+    .sort((a,b) => {
+      if (rectHint) return b.overlap - a.overlap;
+      if (location.hostname.includes('worldchess')) {
+        const aScore = a.visibleArea / (1 + a.centerDistance / Math.max(window.innerWidth, window.innerHeight));
+        const bScore = b.visibleArea / (1 + b.centerDistance / Math.max(window.innerWidth, window.innerHeight));
+        return bScore - aScore || b.cells.size - a.cells.size;
+      }
+      return b.visibleArea - a.visibleArea || b.cells.size - a.cells.size;
+    });
   if (!candidates.length) return { error: 'Bu sayfada okunabilir bir satranç tahtası bulamadım. Canlı oyun sekmesinde 2B tahtayı açıp yeniden dene.' };
   const { board, cells, rect } = candidates[0];
   const flipped = board.classList.contains('orientation-black') || isBoardFlipped(board);

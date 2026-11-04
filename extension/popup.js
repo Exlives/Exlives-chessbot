@@ -84,6 +84,9 @@ function boardMapFromGame(game) {
 function isStartingPosition(board) {
   return matchesBoard(new Chess(), board.pieces);
 }
+function bottomPlayerColor(board) {
+  return board.bottomColor || (board.flipped ? 'b' : 'w');
+}
 function matchesBoard(game, observed) {
   const calculated = boardMapFromGame(game);
   const squares = new Set([...Object.keys(calculated), ...Object.keys(observed)]);
@@ -155,6 +158,73 @@ async function captureBoard(board) {
   boardImage.src = canvas.toDataURL('image/png');
   boardPreview.hidden = false;
 }
+
+async function readWorldChessBoard(tabId) {
+  const [injected] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const boards = [...document.querySelectorAll('[data-cg-type="board"]')]
+        .map(board => ({ board, rect: board.getBoundingClientRect() }))
+        .filter(({ board, rect }) => {
+          const ratio = rect.width / rect.height;
+          const visibleWidth = Math.max(0, Math.min(rect.right, viewport.width) - Math.max(rect.left, 0));
+          const visibleHeight = Math.max(0, Math.min(rect.bottom, viewport.height) - Math.max(rect.top, 0));
+          return board.classList.contains('cg-board') && rect.width > 200 && rect.height > 200 &&
+            ratio > 0.9 && ratio < 1.1 && visibleWidth > 200 && visibleHeight > 200;
+        });
+      const candidate = boards.sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0];
+      if (!candidate) return null;
+      const { board, rect } = candidate;
+      const styleFlipped = board.classList.contains('orientation-black') ||
+        !!board.closest('.orientation-black, .flipped') || /rotate\(\s*180deg\s*\)/i.test(board.style.transform);
+      const visualRows = { w: [], b: [] };
+      const visualPieces = [];
+      for (const piece of board.querySelectorAll('[data-cg-type="piece"]')) {
+        const code = [...piece.classList].map(name => name.match(/^([wb])([kqrbnp])$/)).find(Boolean);
+        if (!code) continue;
+        const box = piece.getBoundingClientRect();
+        const centerX = box.left + box.width / 2;
+        const centerY = box.top + box.height / 2;
+        const file = Math.floor((centerX - rect.left) / (rect.width / 8));
+        const row = Math.floor((centerY - rect.top) / (rect.height / 8));
+        if (file < 0 || file > 7 || row < 0 || row > 7) continue;
+        visualRows[code[1]].push(row);
+        visualPieces.push({ color: code[1], type: code[2], file, row });
+      }
+      if (visualPieces.length < 2) return null;
+      const medianRow = values => {
+        const sorted = [...values].sort((a, b) => a - b);
+        return sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+      };
+      const whiteMedianRow = medianRow(visualRows.w);
+      const blackMedianRow = medianRow(visualRows.b);
+      const bottomColor = whiteMedianRow === null || blackMedianRow === null
+        ? (styleFlipped ? 'b' : 'w')
+        : whiteMedianRow > blackMedianRow ? 'w' : 'b';
+      // The lower side's pieces determine the board orientation; CSS rotation
+      // classes on World Chess boards are not reliable across game layouts.
+      const flipped = bottomColor === 'b';
+      const pieces = {};
+      for (const piece of visualPieces) {
+        let { file, row } = piece;
+        if (flipped) { file = 7 - file; row = 7 - row; }
+        pieces[`${'abcdefgh'[file]}${8 - row}`] = `${piece.color}${piece.type}`;
+      }
+      return {
+        pieces,
+        site: 'World Chess',
+        moveHistory: [],
+        boardRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        viewport,
+        flipped,
+        bottomColor,
+        turn: null
+      };
+    }
+  });
+  return injected?.result || null;
+}
 function showArrow(move, flipped) {
   const squarePoint = square => {
     let file = square.charCodeAt(0) - 97;
@@ -177,6 +247,7 @@ let lastPieces = null;
 let lastOpponentMove = null;
 let lastHistoryPly = 0;
 let lastFlipped = null;
+let lastGameKey = null;
 let scanning = false;
 let ownColor = ownColorSelect.value;
 let liveTracking = true;
@@ -205,6 +276,10 @@ async function readCurrentBoard() {
   }
   sourceTabId = tab.id;
   let board;
+  if (/worldchess\.com$/i.test(new URL(tab.url).hostname)) {
+    try { board = await readWorldChessBoard(tab.id); } catch { /* Fall back to the content script reader. */ }
+  }
+  if (board) return { tab, board };
   try {
     board = await chrome.tabs.sendMessage(tab.id, { type: 'READ_CHESS_BOARD' });
   } catch {
@@ -218,20 +293,144 @@ async function readCurrentBoard() {
 
 async function showArrowOnSite(move, board) {
   if (sourceTabId == null) return;
-  try {
-    await chrome.tabs.sendMessage(sourceTabId, {
+  if (board.site === 'World Chess') {
+    try {
+      const [injected] = await chrome.scripting.executeScript({
+        target: { tabId: sourceTabId },
+        args: [move, board.flipped],
+        func: (move, flipped) => {
+          globalThis.__exlivesWorldChessArrow?.dispose?.();
+          document.querySelector('#hamle-move-overlay')?.remove();
+          const findBoard = () => [...document.querySelectorAll('[data-cg-type="board"].cg-board')]
+            .map(element => ({ element, rect: element.getBoundingClientRect() }))
+            .filter(({ rect }) => rect.width > 200 && rect.height > 200 &&
+              rect.right > 0 && rect.bottom > 0 && rect.left < innerWidth && rect.top < innerHeight)
+            .sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]?.element;
+          const boardElement = findBoard();
+          if (!boardElement) return { error: 'World Chess cg-board tahtası artık görünür değil.' };
+          const ns = 'http://www.w3.org/2000/svg';
+          const overlay = document.createElement('div');
+          overlay.id = 'exlives-worldchess-arrow';
+          overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;overflow:visible';
+          const svg = document.createElementNS(ns, 'svg');
+          svg.setAttribute('viewBox', '0 0 800 800');
+          svg.setAttribute('preserveAspectRatio', 'none');
+          svg.setAttribute('width', '100%');
+          svg.setAttribute('height', '100%');
+          const defs = document.createElementNS(ns, 'defs');
+          const marker = document.createElementNS(ns, 'marker');
+          marker.id = 'exlives-worldchess-arrowhead';
+          marker.setAttribute('markerWidth', '8');
+          marker.setAttribute('markerHeight', '8');
+          marker.setAttribute('refX', '6');
+          marker.setAttribute('refY', '3');
+          marker.setAttribute('orient', 'auto');
+          const head = document.createElementNS(ns, 'path');
+          head.setAttribute('d', 'M0,0 L0,6 L7,3 z');
+          head.setAttribute('fill', '#d5fa79');
+          marker.append(head);
+          defs.append(marker);
+          const origin = document.createElementNS(ns, 'circle');
+          origin.setAttribute('r', '20');
+          origin.setAttribute('fill', '#d5fa7926');
+          origin.setAttribute('stroke', '#d5fa79');
+          origin.setAttribute('stroke-width', '4');
+          const line = document.createElementNS(ns, 'line');
+          line.setAttribute('stroke', '#d5fa79');
+          line.setAttribute('stroke-width', '11');
+          line.setAttribute('stroke-linecap', 'round');
+          line.setAttribute('marker-end', 'url(#exlives-worldchess-arrowhead)');
+          line.setAttribute('filter', 'drop-shadow(0 1px 3px #172015)');
+          svg.append(defs, origin, line);
+          overlay.append(svg);
+          document.documentElement.append(overlay);
+
+          let observedBoard = null;
+          let resizeObserver = null;
+          const point = square => {
+            let file = square.charCodeAt(0) - 97;
+            let row = 8 - Number(square[1]);
+            if (flipped) { file = 7 - file; row = 7 - row; }
+            return { x: (file + 0.5) * 100, y: (row + 0.5) * 100 };
+          };
+          const update = () => {
+            const currentBoard = findBoard();
+            if (!currentBoard) { overlay.remove(); return; }
+            if (currentBoard !== observedBoard) {
+              resizeObserver?.disconnect();
+              observedBoard = currentBoard;
+              resizeObserver?.observe(observedBoard);
+            }
+            const rect = currentBoard.getBoundingClientRect();
+            Object.assign(overlay.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+            const from = point(move.from), to = point(move.to);
+            origin.setAttribute('cx', from.x); origin.setAttribute('cy', from.y);
+            line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+            line.setAttribute('x2', to.x); line.setAttribute('y2', to.y);
+          };
+          resizeObserver = new ResizeObserver(update);
+          resizeObserver.observe(boardElement);
+          const onChange = () => update();
+          window.addEventListener('resize', onChange);
+          window.addEventListener('scroll', onChange, true);
+          const mutationObserver = new MutationObserver(update);
+          mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+          globalThis.__exlivesWorldChessArrow = {
+            dispose() {
+              mutationObserver.disconnect();
+              resizeObserver.disconnect();
+              window.removeEventListener('resize', onChange);
+              window.removeEventListener('scroll', onChange, true);
+              overlay.remove();
+            }
+          };
+          update();
+          return { ok: true };
+        }
+      });
+      if (injected?.result?.ok) return;
+    } catch { /* Try the content-script overlay below. */ }
+  }
+  const message = {
       type: 'SHOW_MOVE_ARROW', move,
       boardRect: board.boardRect
-    });
-  } catch { /* The in-app arrow remains available if the page rejects the overlay. */ }
+  };
+  try {
+    await chrome.tabs.sendMessage(sourceTabId, message);
+  } catch {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: sourceTabId }, files: ['content.js'] });
+      await chrome.tabs.sendMessage(sourceTabId, message);
+    } catch { /* The in-app arrow remains available if the page rejects the overlay. */ }
+  }
 }
 async function clearArrowOnSite() {
   if (sourceTabId == null) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: sourceTabId },
+      func: () => {
+        globalThis.__exlivesWorldChessArrow?.dispose?.();
+        delete globalThis.__exlivesWorldChessArrow;
+        document.querySelector('#exlives-worldchess-arrow, #hamle-move-overlay')?.remove();
+      }
+    });
+  } catch { /* The game tab may have closed or navigated away. */ }
   try { await chrome.tabs.sendMessage(sourceTabId, { type: 'CLEAR_MOVE_ARROW' }); } catch { /* The tab may have closed. */ }
 }
 
+window.addEventListener('pagehide', () => { void clearArrowOnSite(); });
+
 function getSignature(board) {
   return JSON.stringify(Object.entries(board.pieces).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function getGameKey(tab) {
+  try {
+    const url = new URL(tab?.url || '');
+    const match = url.pathname.match(/^\/[^/]+\/game\/([^/]+)/i) || url.pathname.match(/^\/game\/([^/]+)/i);
+    return url.hostname.endsWith('worldchess.com') && match ? `${url.hostname}:${match[1]}` : null;
+  } catch { return null; }
 }
 
 function describeMove(before, after, mover) {
@@ -290,10 +489,12 @@ async function scanPosition(force = false) {
       if (lastSignature === null) result.textContent = board.error;
       return;
     }
+    let gameKey = getGameKey(tab);
     let signature = getSignature(board);
     let changed = signature !== lastSignature;
-    let newGameDetected = lastSignature !== null && isStartingPosition(board) && (
-      changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly
+    let newGameDetected = lastSignature !== null && (
+      (gameKey && lastGameKey && gameKey !== lastGameKey) ||
+      (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
     );
     if (!changed && !newGameDetected && !force) return;
     // Wait for animations to settle, then read the board again. This avoids
@@ -302,6 +503,7 @@ async function scanPosition(force = false) {
       await new Promise(resolve => setTimeout(resolve, 350));
       const stable = await readCurrentBoard();
       if (stable.board.error) return;
+      gameKey = getGameKey(stable.tab);
       board.pieces = stable.board.pieces;
       board.boardRect = stable.board.boardRect;
       board.viewport = stable.board.viewport;
@@ -310,8 +512,9 @@ async function scanPosition(force = false) {
       board.moveHistory = stable.board.moveHistory;
       signature = getSignature(board);
       changed = signature !== lastSignature;
-      newGameDetected = lastSignature !== null && isStartingPosition(board) && (
-        changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly
+      newGameDetected = lastSignature !== null && (
+        (gameKey && lastGameKey && gameKey !== lastGameKey) ||
+        (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
       );
     }
     // A full starting setup appearing after a played position signals a new game.
@@ -325,7 +528,7 @@ async function scanPosition(force = false) {
       lastOpponentMove = null;
       lastHistoryPly = 0;
       lastSignature = null;
-      ownColor = board.flipped ? 'b' : 'w';
+      ownColor = bottomPlayerColor(board);
       ownColorSelect.value = ownColor;
       autoDetectColor = true;
       document.querySelector('#move-arrow').hidden = true;
@@ -334,7 +537,7 @@ async function scanPosition(force = false) {
     }
     ownColor = ownColorSelect.value;
     if (!ownColor && autoDetectColor) {
-      ownColor = board.flipped ? 'b' : 'w';
+      ownColor = bottomPlayerColor(board);
       ownColorSelect.value = ownColor;
     }
     if (!ownColor) {
@@ -377,6 +580,7 @@ async function scanPosition(force = false) {
     }
     lastSignature = signature;
     lastFlipped = board.flipped;
+    lastGameKey = gameKey;
     lastPieces = { ...board.pieces };
     latestBoard = board;
     if (trackedTurn !== ownColor) {
@@ -414,6 +618,7 @@ document.querySelector('#new-game').addEventListener('click', () => {
   lastOpponentMove = null;
   lastHistoryPly = 0;
   lastFlipped = null;
+  lastGameKey = null;
   analysisGeneration++;
   stopStockfish();
   clearArrowOnSite();
@@ -426,9 +631,22 @@ document.querySelector('#new-game').addEventListener('click', () => {
   result.textContent = 'Tahtanın yönünden taş rengin algılanıyor…';
   scanPosition(true);
 });
-ownColorSelect.addEventListener('change', () => {
+ownColorSelect.addEventListener('change', async () => {
   ownColor = ownColorSelect.value;
   autoDetectColor = false;
+  lastSignature = null;
+  trackedTurn = null;
+  latestBoard = null;
+  lastPieces = null;
+  lastOpponentMove = null;
+  lastHistoryPly = 0;
+  lastFlipped = null;
+  lastGameKey = null;
+  analysisGeneration++;
+  stopStockfish();
+  await clearArrowOnSite();
+  document.querySelector('#move-arrow').hidden = true;
+  boardPreview.hidden = true;
   if (liveTracking) scanPosition(true);
 });
 const liveToggle = document.querySelector('#live-toggle');
