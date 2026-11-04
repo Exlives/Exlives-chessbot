@@ -17,6 +17,11 @@ function deepQueryAll(root, selector, found = []) {
   return found;
 }
 
+function isBoardFlipped(board) {
+  return !!board.closest('.orientation-black, .flipped') ||
+    (board.matches('[data-cg-type="board"]') && /rotate\(\s*180deg\s*\)/i.test(board.style.transform));
+}
+
 function readPieces(board) {
   const cells = new Map();
   if (board.matches('wc-chess-board')) {
@@ -31,9 +36,8 @@ function readPieces(board) {
   } else {
     const rect = board.getBoundingClientRect();
     const chessground = board.matches('[data-cg-type="board"]');
-    const flipped = !!board.closest('.orientation-black, .flipped') ||
-      (chessground && /rotate\(\s*180deg\s*\)/i.test(board.style.transform));
-    for (const el of board.querySelectorAll('piece, [data-piece], [data-role], [class*="piece"]')) {
+    const flipped = isBoardFlipped(board);
+    for (const el of board.querySelectorAll('piece, [data-piece], [data-role], [data-cg-type="piece"], [class*="piece"]')) {
       const cls = [...el.classList];
       const descriptor = [el.getAttribute('data-piece'), el.getAttribute('data-role'), ...cls].filter(Boolean).join(' ').toLowerCase();
       const cgPiece = chessground && cls.length === 1 ? cls[0].match(/^([wb])([kqrbnp])$/) : null;
@@ -104,7 +108,7 @@ function getBoardPosition(rectHint = null, includeElement = false) {
     .sort((a,b) => rectHint ? b.overlap - a.overlap : b.cells.size - a.cells.size || b.rect.width - a.rect.width);
   if (!candidates.length) return { error: 'Bu sayfada okunabilir bir satranç tahtası bulamadım. Canlı oyun sekmesinde 2B tahtayı açıp yeniden dene.' };
   const { board, cells, rect } = candidates[0];
-  const flipped = board.classList.contains('orientation-black') || !!board.closest('.orientation-black, .flipped');
+  const flipped = board.classList.contains('orientation-black') || isBoardFlipped(board);
   let turn = null;
   const clocks = [...document.querySelectorAll('.clock-player-turn, .rclock.running, .clock.running')];
   const clock = clocks.map(el => ({ el, box: el.getBoundingClientRect() }))
