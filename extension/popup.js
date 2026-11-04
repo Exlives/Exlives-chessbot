@@ -190,8 +190,8 @@ async function readCurrentBoard() {
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const tab = Number.isInteger(tabId) && tabId > 0 ? await chrome.tabs.get(tabId) : activeTab;
   if (!tab?.id) throw new Error('Etkin satranç sekmesini bulamadım.');
-  if (!/^https:\/\/(?:[^/]+\.)?(?:chess\.com|lichess\.org)\//i.test(tab.url || '')) {
-    throw new Error('Bağlı sekme Chess.com veya Lichess değil. Satranç sekmesine geçip uzantı simgesine tekrar tıkla.');
+  if (!/^https:\/\/(?:[^/]+\.)?(?:chess\.com|lichess\.org|worldchess\.com)\//i.test(tab.url || '')) {
+    throw new Error('Bağlı sekme desteklenen bir satranç sitesi değil. Satranç sekmesine geçip uzantı simgesine tekrar tıkla.');
   }
   sourceTabId = tab.id;
   let board;

@@ -30,11 +30,15 @@ function readPieces(board) {
     }
   } else {
     const rect = board.getBoundingClientRect();
-    const flipped = !!board.closest('.orientation-black');
-    for (const el of board.querySelectorAll('piece')) {
+    const chessground = board.matches('[data-cg-type="board"]');
+    const flipped = !!board.closest('.orientation-black, .flipped') ||
+      (chessground && /rotate\(\s*180deg\s*\)/i.test(board.style.transform));
+    for (const el of board.querySelectorAll('piece, [data-piece], [data-role], [class*="piece"]')) {
       const cls = [...el.classList];
-      const color = cls.includes('white') ? 'w' : cls.includes('black') ? 'b' : null;
-      const role = cls.find(x => ['king','queen','rook','bishop','knight','pawn'].includes(x));
+      const descriptor = [el.getAttribute('data-piece'), el.getAttribute('data-role'), ...cls].filter(Boolean).join(' ').toLowerCase();
+      const cgPiece = chessground && cls.length === 1 ? cls[0].match(/^([wb])([kqrbnp])$/) : null;
+      const color = cgPiece?.[1] || (/\b(white|w)\b/.test(descriptor) ? 'w' : /\b(black|b)\b/.test(descriptor) ? 'b' : null);
+      const role = cgPiece?.[2] || descriptor.match(/\b(king|queen|rook|bishop|knight|pawn)\b/)?.[1];
       if (!color || !role) continue;
       const box = el.getBoundingClientRect();
       let col = Math.floor(((box.left + box.width / 2) - rect.left) / (rect.width / 8));
@@ -43,7 +47,7 @@ function readPieces(board) {
       if (flipped) { col = 7 - col; row = 7 - row; }
       const file = 'abcdefgh'[col], rank = String(8 - row);
       const map = { king:'k', queen:'q', rook:'r', bishop:'b', knight:'n', pawn:'p' };
-      cells.set(`${file}${rank}`, `${color}${map[role]}`);
+      cells.set(`${file}${rank}`, `${color}${map[role] || role}`);
     }
   }
   return cells;
@@ -84,7 +88,7 @@ function readMoveHistory() {
 function getBoardPosition(rectHint = null, includeElement = false) {
   // Lichess uses the custom element <cg-board>; Chess.com uses <wc-chess-board>.
   // Search open shadow roots too, as some page layouts mount the board there.
-  const boards = [...new Set(deepQueryAll(document, 'wc-chess-board, cg-board, .cg-board'))];
+  const boards = [...new Set(deepQueryAll(document, 'wc-chess-board, cg-board, .cg-board, [data-cg-type="board"], chess-board, .chess-board, [data-testid*="chessboard"], [data-testid*="chess-board"]'))];
   const candidates = boards.map(board => ({ board, cells: readPieces(board), rect: board.getBoundingClientRect() }))
     .filter(x => x.cells.size >= 2 && x.rect.width > 120 && x.rect.height > 120)
     .map(candidate => {
@@ -113,7 +117,7 @@ function getBoardPosition(rectHint = null, includeElement = false) {
   }
   return {
     pieces: Object.fromEntries(cells),
-    site: location.hostname.includes('lichess') ? 'Lichess' : 'Chess.com',
+    site: location.hostname.includes('lichess') ? 'Lichess' : location.hostname.includes('worldchess') ? 'World Chess' : 'Chess.com',
     moveHistory: readMoveHistory(),
     boardRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
@@ -291,7 +295,7 @@ function startBoardPicker(sendResponse) {
     }
     const board = getBoardPosition(rectHint);
     if (board.error) {
-      sendResponse({ error: 'Seçtiğin alanın içinde tanıdığım bir 2B satranç tahtası yok. Chess.com/Lichess tahtasının tamamını seç.' });
+      sendResponse({ error: 'Seçtiğin alanın içinde tanıdığım bir 2B satranç tahtası yok. Oyun tahtasının tamamını seç.' });
       return;
     }
     sendResponse(board);

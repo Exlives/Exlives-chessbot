@@ -22,7 +22,7 @@
   },
   "background": { "service_worker": "background.js" },
   "content_scripts": [{
-    "matches": ["https://*.chess.com/*", "https://*.lichess.org/*"],
+    "matches": ["https://*.chess.com/*", "https://*.lichess.org/*", "https://worldchess.com/*", "https://*.worldchess.com/*"],
     "js": ["content.js"],
     "run_at": "document_idle"
   }]
