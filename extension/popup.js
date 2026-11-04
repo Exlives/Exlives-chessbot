@@ -184,6 +184,16 @@ let pollTimer = null;
 let analysisGeneration = 0;
 let autoDetectColor = true;
 
+function errorText(error, fallback) {
+  if (typeof error === 'string' && error.trim()) return error;
+  if (error?.message) return error.message;
+  try {
+    const detail = JSON.stringify(error);
+    if (detail && detail !== '{}') return detail;
+  } catch { /* Use the caller's fallback for non-serializable values. */ }
+  return fallback;
+}
+
 async function readCurrentBoard() {
   const params = new URLSearchParams(location.search);
   const tabId = Number(params.get('tabId'));
@@ -383,7 +393,7 @@ async function scanPosition(force = false) {
     scanning = false;
     await analyzeBoard(board, trackedTurn, positionGame);
   } catch (error) {
-    result.textContent = error.message || 'Tahtayı okuyamadım. Satranç sekmesini yenileyip tekrar dene.';
+    result.textContent = errorText(error, 'Tahtayı okuyamadım. Satranç sekmesini yenileyip tekrar dene.');
   } finally { scanning = false; }
 }
 
@@ -393,7 +403,7 @@ document.querySelector('#show-on-board').addEventListener('click', async () => {
     await setMiniMode(true);
     await scanPosition(true);
   } catch (error) {
-    result.textContent = error.message || 'Tahtayı otomatik algılayamadım. Satranç sekmesini kontrol edip tekrar dene.';
+    result.textContent = errorText(error, 'Tahtayı otomatik algılayamadım. Satranç sekmesini kontrol edip tekrar dene.');
   }
 });
 document.querySelector('#new-game').addEventListener('click', () => {

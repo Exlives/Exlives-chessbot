@@ -10,7 +10,20 @@ export class StockfishEngine {
     });
     this.worker.onmessage = event => this.onMessage(String(event.data));
     this.worker.onerror = event => {
-      const error = new Error(event.message || 'Stockfish motoru başlatılamadı.');
+      event.preventDefault?.();
+      const workerError = event.error;
+      const detail = workerError?.message || (typeof workerError === 'string' ? workerError : '') || event.message;
+      const error = new Error(detail && detail !== '[object Object]'
+        ? `Stockfish worker hatası: ${detail}`
+        : 'Stockfish worker hata verdi. Uzantıdaki vendor/stockfish/ dosyalarını kontrol edip uzantıyı yenile.');
+      if (workerError?.stack) error.stack = workerError.stack;
+      this.rejectReady?.(error);
+      this.currentSearch?.resolveDone?.();
+      this.currentSearch?.reject(error);
+      this.currentSearch = null;
+    };
+    this.worker.onmessageerror = () => {
+      const error = new Error('Stockfish worker mesajı okunamadı. Uzantıyı chrome://extensions sayfasından yenile.');
       this.rejectReady?.(error);
       this.currentSearch?.resolveDone?.();
       this.currentSearch?.reject(error);
