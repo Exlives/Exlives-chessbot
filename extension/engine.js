@@ -1,11 +1,24 @@
-const ENGINE_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.js');
-const WASM_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.wasm');
+const FULL_ENGINE_URL = chrome.runtime.getURL('vendor/stockfish/stockfish-full.js');
+const FULL_WASM_URL = chrome.runtime.getURL('vendor/stockfish/stockfish-full.wasm');
+const LITE_ENGINE_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.js');
+const LITE_WASM_URL = chrome.runtime.getURL('vendor/stockfish/stockfish.wasm');
+
+function workerErrorMessage(workerError, event) {
+  let detail = workerError?.message || (typeof workerError === 'string' ? workerError : '') || '';
+  if (!detail && workerError && typeof workerError === 'object') {
+    try { detail = JSON.stringify(workerError); } catch { /* Use the browser event message. */ }
+  }
+  detail ||= event?.message;
+  return detail && detail !== '[object Object]'
+    ? `Stockfish worker hatası: ${detail}`
+    : 'Stockfish worker hata verdi. Uzantıyı chrome://extensions sayfasından yenileyin.';
+}
 
 export class StockfishEngine {
-  constructor() {
-    // Pass the WASM URL explicitly. Stockfish.js reads it from the worker URL
-    // hash; this avoids relying on URL/path inference inside extension workers.
-    this.worker = new Worker(`${ENGINE_URL}#${encodeURIComponent(WASM_URL)}`);
+  constructor(engineUrl, wasmUrl, threads = 1, hash = 32) {
+    // The WASM URL is supplied explicitly so extension worker path resolution is reliable.
+    this.worker = new Worker(`${engineUrl}#${encodeURIComponent(wasmUrl)}`);
+    this.failed = false;
     this.currentSearch = null;
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
@@ -14,35 +27,31 @@ export class StockfishEngine {
     this.worker.onmessage = event => this.onMessage(String(event.data));
     this.worker.onerror = event => {
       event.preventDefault?.();
-      const workerError = event.error;
-      let detail = workerError?.message || (typeof workerError === 'string' ? workerError : '') || '';
-      if (!detail && workerError && typeof workerError === 'object') {
-        try { detail = JSON.stringify(workerError); } catch { /* Use the event message below. */ }
-      }
-      detail ||= event.message;
-      const error = new Error(detail && detail !== '[object Object]'
-        ? `Stockfish worker hatası: ${detail}`
-        : 'Stockfish worker hata verdi. Uzantıdaki vendor/stockfish/ dosyalarını kontrol edip uzantıyı yenile.');
-      if (workerError?.stack) error.stack = workerError.stack;
+      this.failed = true;
+      const error = new Error(workerErrorMessage(event.error, event));
+      if (event.error?.stack) error.stack = event.error.stack;
       this.rejectReady?.(error);
       this.currentSearch?.resolveDone?.();
       this.currentSearch?.reject(error);
       this.currentSearch = null;
     };
     this.worker.onmessageerror = () => {
-      const error = new Error('Stockfish worker mesajı okunamadı. Uzantıyı chrome://extensions sayfasından yenile.');
+      this.failed = true;
+      const error = new Error('Stockfish worker mesajı okunamadı. Uzantıyı chrome://extensions sayfasından yenileyin.');
       this.rejectReady?.(error);
       this.currentSearch?.resolveDone?.();
       this.currentSearch?.reject(error);
       this.currentSearch = null;
     };
     this.worker.postMessage('uci');
+    this.threads = threads;
+    this.hash = hash;
   }
 
   onMessage(line) {
     if (line === 'uciok') {
-      this.worker.postMessage('setoption name Threads value 1');
-      this.worker.postMessage('setoption name Hash value 32');
+      this.worker.postMessage(`setoption name Threads value ${this.threads}`);
+      this.worker.postMessage(`setoption name Hash value ${this.hash}`);
       this.worker.postMessage('isready');
       return;
     }
@@ -92,11 +101,41 @@ export class StockfishEngine {
   stop() {
     if (this.currentSearch) this.worker.postMessage('stop');
   }
+
+  terminate() {
+    this.worker.terminate();
+  }
+}
+
+class EngineManager {
+  constructor() {
+    // Full Stockfish 19 is much stronger and uses up to four cores. If Chrome or
+    // the device cannot start its threaded WASM worker, fall back to the lite build.
+    this.threads = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
+    this.engine = new StockfishEngine(FULL_ENGINE_URL, FULL_WASM_URL, this.threads, 128);
+    this.usingLite = false;
+  }
+
+  async search(fen, depth, onInfo) {
+    try {
+      return await this.engine.search(fen, depth, onInfo);
+    } catch (error) {
+      if (this.usingLite || !this.engine.failed) throw error;
+      this.engine.terminate();
+      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32);
+      this.usingLite = true;
+      return this.engine.search(fen, depth, onInfo);
+    }
+  }
+
+  stop() {
+    this.engine?.stop();
+  }
 }
 
 let engineInstance;
 export function getStockfish() {
-  if (!engineInstance) engineInstance = new StockfishEngine();
+  if (!engineInstance) engineInstance = new EngineManager();
   return engineInstance;
 }
 export function stopStockfish() {
