@@ -211,15 +211,39 @@ async function readWorldChessBoard(tabId) {
         if (flipped) { file = 7 - file; row = 7 - row; }
         pieces[`${'abcdefgh'[file]}${8 - row}`] = `${piece.color}${piece.type}`;
       }
+      const cleanSan = text => {
+        const san = text.replace(/^\s*\d+\.(?:\.\.)?\s*/, '').replace(/[!?]+$/g, '').trim();
+        return /^(?:O-O(?:-O)?|0-0(?:-0)?|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=?[QRBN])?)[+#]?$/.test(san)
+          ? san.replace(/0/g, 'O') : null;
+      };
+      const moveHistory = [...document.querySelectorAll('[data-component="GameNotationTable"]')]
+        .map(table => [...table.querySelectorAll('button[class*="table_move"]')]
+          .map(button => cleanSan(button.innerText || button.textContent || ''))
+          .filter(Boolean))
+        .sort((a, b) => b.length - a.length)[0] || [];
+      const isInitialPosition = (() => {
+        const expected = {};
+        for (let file = 0; file < 8; file++) {
+          expected[`${'abcdefgh'[file]}2`] = 'wp';
+          expected[`${'abcdefgh'[file]}7`] = 'bp';
+        }
+        for (let file = 0; file < 8; file++) {
+          const type = 'rnbqkbnr'[file];
+          expected[`${'abcdefgh'[file]}1`] = `w${type}`;
+          expected[`${'abcdefgh'[file]}8`] = `b${type}`;
+        }
+        return Object.keys(expected).length === Object.keys(pieces).length &&
+          Object.entries(expected).every(([square, piece]) => pieces[square] === piece);
+      })();
       return {
         pieces,
         site: 'World Chess',
-        moveHistory: [],
+        moveHistory,
         boardRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
         viewport,
         flipped,
         bottomColor,
-        turn: null
+        turn: moveHistory.length % 2 ? 'b' : (moveHistory.length || isInitialPosition ? 'w' : null)
       };
     }
   });
@@ -550,7 +574,7 @@ async function scanPosition(force = false) {
     const previousTurn = trackedTurn;
     const previousPieces = lastPieces;
     if (lastSignature === null) {
-      trackedTurn = historyIsCurrent ? positionGame.turn() : board.turn || ownColor;
+      trackedTurn = historyIsCurrent ? positionGame.turn() : board.turn || (isStartingPosition(board) ? 'w' : ownColor);
       lastHistoryPly = historyIsCurrent ? moveHistory.length : 0;
       if (historyIsCurrent && moveHistory.length) {
         const lastMover = moveHistory.length % 2 ? 'w' : 'b';
