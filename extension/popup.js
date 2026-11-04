@@ -485,11 +485,13 @@ async function analyzeBoard(board, turn, game) {
   try { await captureBoard(board); } catch { screenshotFailed = true; }
   if (generation !== analysisGeneration) return;
   const engine = getStockfish();
-  const search = await engine.search(game.fen(), Number(document.querySelector('#depth').value), info => {
+  const depthSelect = document.querySelector('#depth');
+  const selectedDepth = depthSelect.selectedOptions[0];
+  const search = await engine.search(game.fen(), Number(depthSelect.value), info => {
     if (generation !== analysisGeneration) return;
     const score = scoreText(info);
     result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
-  });
+  }, Number(selectedDepth.dataset.time));
   if (generation !== analysisGeneration) return;
   // Keep the root position intact: the engine PV starts with this same move,
   // and explainMove replays that PV from the unmodified position.
@@ -649,7 +651,7 @@ document.querySelector('#new-game').addEventListener('click', () => {
   ownColor = '';
   autoDetectColor = true;
   ownColorSelect.value = '';
-  document.querySelector('#depth').value = '24';
+  document.querySelector('#depth').value = '12';
   boardPreview.hidden = true;
   document.querySelector('#move-arrow').hidden = true;
   result.textContent = 'Tahtanın yönünden taş rengin algılanıyor…';

@@ -82,7 +82,7 @@ export class StockfishEngine {
     }
   }
 
-  async search(fen, depth, onInfo) {
+  async search(fen, depth, onInfo, timeMs) {
     await this.ready;
     if (this.currentSearch) {
       const previous = this.currentSearch;
@@ -94,7 +94,9 @@ export class StockfishEngine {
       const done = new Promise(resolveFinished => { resolveDone = resolveFinished; });
       this.currentSearch = { resolve, reject, onInfo, info: null, done, resolveDone };
       this.worker.postMessage(`position fen ${fen}`);
-      this.worker.postMessage(`go depth ${depth}`);
+      this.worker.postMessage(timeMs
+        ? `go depth ${depth} movetime ${timeMs}`
+        : `go depth ${depth}`);
     });
   }
 
@@ -109,22 +111,36 @@ export class StockfishEngine {
 
 class EngineManager {
   constructor() {
-    // Full Stockfish 19 is much stronger and uses up to four cores. If Chrome or
-    // the device cannot start its threaded WASM worker, fall back to the lite build.
+    // Keep quick analysis light; use the full multithreaded build for longer searches.
     this.threads = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
-    this.engine = new StockfishEngine(FULL_ENGINE_URL, FULL_WASM_URL, this.threads, 128);
-    this.usingLite = false;
+    this.engine = null;
+    this.usingLite = null;
   }
 
-  async search(fen, depth, onInfo) {
+  selectEngine(useLite) {
+    if (this.engine && this.usingLite === useLite) return;
+    this.engine?.terminate();
     try {
-      return await this.engine.search(fen, depth, onInfo);
+      this.engine = useLite
+        ? new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32)
+        : new StockfishEngine(FULL_ENGINE_URL, FULL_WASM_URL, this.threads, 128);
+      this.usingLite = useLite;
+    } catch {
+      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32);
+      this.usingLite = true;
+    }
+  }
+
+  async search(fen, depth, onInfo, timeMs) {
+    this.selectEngine(timeMs <= 800);
+    try {
+      return await this.engine.search(fen, depth, onInfo, timeMs);
     } catch (error) {
       if (this.usingLite || !this.engine.failed) throw error;
       this.engine.terminate();
       this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32);
       this.usingLite = true;
-      return this.engine.search(fen, depth, onInfo);
+      return this.engine.search(fen, depth, onInfo, timeMs);
     }
   }
 
