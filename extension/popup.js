@@ -56,7 +56,7 @@ async function fitMiniWindow() {
     }
 
     const left = area.left + area.width - width;
-    const top = area.top + 8;
+    const top = area.top + area.height - height - 8;
     if (win.width !== width || win.height !== height || win.left !== left || win.top !== top) {
       await chrome.windows.update(win.id, { width, height, left, top });
     }
@@ -82,7 +82,7 @@ async function setMiniMode(enabled) {
   await chrome.windows.update(win.id, {
     width, height,
     left: area.left + area.width - width,
-    top: area.top + 8,
+    top: area.top + area.height - height - 8,
     focused: true
   });
   const toggle = document.querySelector('#mini-toggle');
@@ -97,7 +97,10 @@ chrome.windows.onBoundsChanged.addListener(async win => {
   const display = displays.find(item => item.isPrimary) || displays[0];
   const area = display?.workArea;
   if (!area) return;
-  const target = { left: area.left + area.width - win.width, top: area.top + 8 };
+  const target = {
+    left: area.left + area.width - win.width,
+    top: area.top + area.height - win.height - 8
+  };
   if (Math.abs(win.left - target.left) < 2 && Math.abs(win.top - target.top) < 2) {
     scheduleMiniFit();
     return;
