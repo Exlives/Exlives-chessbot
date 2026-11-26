@@ -694,6 +694,7 @@ function describeMove(before, after, mover) {
 
 async function analyzeBoard(board, turn, game) {
   const generation = ++analysisGeneration;
+  const signature = getSignature(board);
   result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…</span><span>${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} için en iyi hamle aranıyor.</span>`;
   boardPreview.hidden = true;
   // Paint the status and snapshot the position before starting engine work.
@@ -719,6 +720,20 @@ async function analyzeBoard(board, turn, game) {
     result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
   }, searchTimeMs);
   if (generation !== analysisGeneration) return;
+  const { board: currentBoard } = await readCurrentBoard();
+  if (generation !== analysisGeneration) return;
+  const currentPosition = currentBoard.error ? null : getPositionState(currentBoard, ownColor);
+  if (currentBoard.error || getSignature(currentBoard) !== signature ||
+      (currentPosition?.turn && currentPosition.turn !== turn)) {
+    const invalidationGeneration = ++analysisGeneration;
+    stopStockfish();
+    await clearArrowOnSite();
+    if (invalidationGeneration !== analysisGeneration) return;
+    document.querySelector('#move-arrow').hidden = true;
+    result.textContent = 'Tahta veya hamle sırası değişti; güncel konumu tekrar kontrol ediyorum.';
+    forcedScanQueued = true;
+    return;
+  }
   // Keep the root position intact: the engine PV starts with this same move,
   // and explainMove replays that PV from the unmodified position.
   const move = moveFromUci(new Chess(game.fen()), search.uci);
@@ -730,7 +745,6 @@ async function analyzeBoard(board, turn, game) {
   showArrow(move, board.flipped);
   if (board.site === 'World Chess' || !autoPlay) void showArrowOnSite(move, board);
   if (autoPlay && !autoMoveInProgress) {
-    const signature = getSignature(board);
     if (autoAppliedSignature !== signature) {
       autoMoveInProgress = true;
       try {
@@ -925,7 +939,9 @@ async function scanPosition(force = false) {
     const previousTurn = trackedTurn;
     const previousPieces = lastPieces;
     if (historyIsCurrent) {
-      lastConfirmedGame = new Chess(positionGame.fen());
+      if (autoAppliedSignature !== signature) {
+        lastConfirmedGame = new Chess(positionGame.fen());
+      }
       verifiedWorldChessPosition = null;
       speculativeWorldChessPosition = null;
     } else if (board.site === 'World Chess') {
@@ -962,6 +978,9 @@ async function scanPosition(force = false) {
         speculativeWorldChessPosition = { signature, game: positionGame };
         observedTurn = ownColor;
       }
+    }
+    if (autoAppliedSignature && changed && signature !== autoAppliedSignature) {
+      autoAppliedSignature = null;
     }
     if (lastSignature === null) {
       trackedTurn = observedTurn;
@@ -1008,6 +1027,17 @@ async function scanPosition(force = false) {
     worldChessHistoryPending = worldChessHistoryNeedsSync && !hasVerifiedWorldChessPosition;
     if (positionGame.isGameOver()) {
       await waitForNextGame(board, signature, gameKey);
+      return;
+    }
+    if (autoAppliedSignature === signature) {
+      const waitingMessage = 'Hamle uygulandı; rakibin yanıtını bekliyorum.';
+      if (result.textContent !== waitingMessage) {
+        analysisGeneration++;
+        stopStockfish();
+        await clearArrowOnSite();
+        document.querySelector('#move-arrow').hidden = true;
+        result.textContent = waitingMessage;
+      }
       return;
     }
     if (worldChessHistoryPending && !hasSpeculativeWorldChessPosition && !observedTurn) {
