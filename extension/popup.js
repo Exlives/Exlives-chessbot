@@ -374,7 +374,9 @@ let lastFlipped = null;
 let lastGameKey = null;
 let worldChessHistoryPending = false;
 let analysisInProgressSignature = null;
+let analysisInProgressToken = 0;
 let scanning = false;
+let forcedScanQueued = false;
 let ownColor = ownColorSelect.value;
 let liveTracking = true;
 let pollTimer = null;
@@ -727,6 +729,7 @@ async function analyzeBoard(board, turn, game) {
           return;
         }
         const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, currentBoard);
+        if (generation !== analysisGeneration) return;
         if (applied?.error) {
           result.insertAdjacentHTML('beforeend', `<br><span class="explanation">Otomatik oyun: ${errorText(applied.error, 'Hamle uygulanamadı.')}</span>`);
           if (/izleyici modunda/i.test(errorText(applied.error, ''))) {
@@ -760,7 +763,10 @@ async function analyzeBoard(board, turn, game) {
 }
 
 async function scanPosition(force = false) {
-  if (scanning || autoMoveInProgress) return;
+  if (scanning || autoMoveInProgress) {
+    if (force) forcedScanQueued = true;
+    return;
+  }
   scanning = true;
   try {
     const { tab, board } = await readCurrentBoard();
@@ -965,16 +971,25 @@ async function scanPosition(force = false) {
     scanning = false;
     if (board.site === 'World Chess' && lastAnalyzedWorldChessSignature === signature) return;
     if (analysisInProgressSignature === signature) return;
+    const analysisToken = ++analysisInProgressToken;
     analysisInProgressSignature = signature;
     if (board.site === 'World Chess') lastAnalyzedWorldChessSignature = signature;
     try {
       await analyzeBoard(board, trackedTurn, positionGame);
     } finally {
-      if (analysisInProgressSignature === signature) analysisInProgressSignature = null;
+      if (analysisInProgressToken === analysisToken && analysisInProgressSignature === signature) {
+        analysisInProgressSignature = null;
+      }
     }
   } catch (error) {
     result.textContent = errorText(error, 'Tahtayı okuyamadım. Satranç sekmesini yenileyip tekrar dene.');
-  } finally { scanning = false; }
+  } finally {
+    scanning = false;
+    if (forcedScanQueued && !autoMoveInProgress) {
+      forcedScanQueued = false;
+      setTimeout(() => { void scanPosition(true); }, 0);
+    }
+  }
 }
 
 document.querySelector('#analyze').addEventListener('click', () => scanPosition(true));
