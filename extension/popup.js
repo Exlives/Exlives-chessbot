@@ -173,6 +173,20 @@ function gameFromPosition(board, fallbackTurn) {
   }
   return new Chess(getFen(board.pieces, board.turn || fallbackTurn));
 }
+function getPositionState(board, fallbackTurn) {
+  const moveHistory = board.moveHistory || [];
+  const initialPosition = isStartingPosition(board);
+  const game = gameFromPosition(board, initialPosition ? 'w' : (board.turn || fallbackTurn));
+  const historyIsCurrent = (moveHistory.length > 0 || initialPosition) &&
+    game.history().length === moveHistory.length &&
+    matchesBoard(game, board.pieces);
+  const turn = historyIsCurrent
+    ? game.turn()
+    : board.turn === 'w' || board.turn === 'b'
+      ? board.turn
+      : initialPosition ? 'w' : null;
+  return { game, moveHistory, historyIsCurrent, turn };
+}
 function moveFromUci(game, uci) {
   const match = uci?.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/);
   if (!match) return null;
@@ -350,6 +364,7 @@ let analysisGeneration = 0;
 let autoDetectColor = true;
 let autoPlay = true;
 let autoAppliedSignature = null;
+let autoMoveInProgress = false;
 
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
 const BOARD_SETTLE_MS = 180;
@@ -644,24 +659,37 @@ async function analyzeBoard(board, turn, game) {
   result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
   showArrow(move, board.flipped);
   await showArrowOnSite(move, board);
-  if (autoPlay) {
+  if (autoPlay && !autoMoveInProgress) {
     const signature = getSignature(board);
     if (autoAppliedSignature !== signature) {
-      const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, board);
-      if (applied?.error) {
-        result.insertAdjacentHTML('beforeend', `<br><span class="explanation">Otomatik oyun: ${errorText(applied.error, 'Hamle uygulanamadı.')}</span>`);
-        if (/izleyici modunda/i.test(errorText(applied.error, ''))) {
-          autoPlay = false;
-          autoPlayToggle.setAttribute('aria-pressed', 'false');
-          autoPlayToggle.classList.remove('is-on');
-          autoPlayToggle.innerHTML = '<span class="toggle-dot"></span>Otomatik oyun: Kapalı';
-          setLiveTracking(false);
+      autoMoveInProgress = true;
+      try {
+        if (generation !== analysisGeneration || !autoPlay) return;
+        const { board: currentBoard } = await readCurrentBoard();
+        const currentTurn = currentBoard.error ? null : getPositionState(currentBoard, ownColor).turn;
+        if (generation !== analysisGeneration || !autoPlay) return;
+        if (currentBoard.error || getSignature(currentBoard) !== signature || currentTurn !== ownColor) {
+          result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Tahta veya hamle sırası değişti; güncel sıra doğrulanana kadar bekliyorum.</span>');
+          return;
         }
-      } else if (applied?.changed === false) {
-        result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle gönderildi, ancak tahtada değişiklik doğrulanamadı.</span>');
-      } else {
-        autoAppliedSignature = signature;
-        result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle tahtaya uygulandı.</span>');
+        const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, board);
+        if (applied?.error) {
+          result.insertAdjacentHTML('beforeend', `<br><span class="explanation">Otomatik oyun: ${errorText(applied.error, 'Hamle uygulanamadı.')}</span>`);
+          if (/izleyici modunda/i.test(errorText(applied.error, ''))) {
+            autoPlay = false;
+            autoPlayToggle.setAttribute('aria-pressed', 'false');
+            autoPlayToggle.classList.remove('is-on');
+            autoPlayToggle.innerHTML = '<span class="toggle-dot"></span>Otomatik oyun: Kapalı';
+            setLiveTracking(false);
+          }
+        } else if (applied?.changed === false) {
+          result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle gönderildi, ancak tahtada değişiklik doğrulanamadı.</span>');
+        } else {
+          autoAppliedSignature = signature;
+          result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle tahtaya uygulandı.</span>');
+        }
+      } finally {
+        autoMoveInProgress = false;
       }
     }
   }
@@ -672,7 +700,7 @@ async function analyzeBoard(board, turn, game) {
 }
 
 async function scanPosition(force = false) {
-  if (scanning) return;
+  if (scanning || autoMoveInProgress) return;
   scanning = true;
   try {
     const { tab, board } = await readCurrentBoard();
@@ -687,7 +715,7 @@ async function scanPosition(force = false) {
       (gameKey && lastGameKey && gameKey !== lastGameKey) ||
       (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
     );
-    if (!changed && !newGameDetected && !force) return;
+    if (!changed && !newGameDetected && !force && trackedTurn !== null) return;
     // Wait for animations to settle, then read the board again. This avoids
     // treating an in-flight piece as a second move or missing the reply.
     if (changed && lastSignature !== null) {
@@ -735,20 +763,19 @@ async function scanPosition(force = false) {
       result.textContent = 'Kendi taş rengini seçerek canlı takibi başlat.';
       return;
     }
-    const positionGame = gameFromPosition(board, ownColor);
-    const moveHistory = board.moveHistory || [];
-    const historyIsCurrent = positionGame.history().length === moveHistory.length && matchesBoard(positionGame, board.pieces);
+    const position = getPositionState(board, ownColor);
+    const { game: positionGame, moveHistory, historyIsCurrent, turn: observedTurn } = position;
     const previousTurn = trackedTurn;
     const previousPieces = lastPieces;
     if (lastSignature === null) {
-      trackedTurn = historyIsCurrent ? positionGame.turn() : board.turn || (isStartingPosition(board) ? 'w' : ownColor);
+      trackedTurn = observedTurn;
       lastHistoryPly = historyIsCurrent ? moveHistory.length : 0;
       if (historyIsCurrent && moveHistory.length) {
         const lastMover = moveHistory.length % 2 ? 'w' : 'b';
         if (lastMover !== ownColor) lastOpponentMove = moveHistory.at(-1);
       }
     } else if (changed) {
-      trackedTurn = historyIsCurrent ? positionGame.turn() : board.turn || (trackedTurn === 'w' ? 'b' : 'w');
+      trackedTurn = observedTurn;
       if (moveHistory.length < lastHistoryPly && historyIsCurrent) {
         lastOpponentMove = null;
         lastHistoryPly = 0;
@@ -763,17 +790,30 @@ async function scanPosition(force = false) {
         lastOpponentMove = describeMove(previousPieces, board.pieces, previousTurn) || lastOpponentMove;
       }
     } else if (historyIsCurrent && moveHistory.length > lastHistoryPly) {
+      trackedTurn = observedTurn;
       for (let ply = lastHistoryPly; ply < moveHistory.length; ply++) {
         const mover = ply % 2 ? 'b' : 'w';
         if (mover !== ownColor) lastOpponentMove = moveHistory[ply];
       }
       lastHistoryPly = moveHistory.length;
+    } else if (observedTurn) {
+      trackedTurn = observedTurn;
     }
     lastSignature = signature;
     lastFlipped = board.flipped;
     lastGameKey = gameKey;
     lastPieces = { ...board.pieces };
     latestBoard = board;
+    if (trackedTurn === null) {
+      if (previousTurn !== null || changed || force) {
+        analysisGeneration++;
+        stopStockfish();
+        await clearArrowOnSite();
+        document.querySelector('#move-arrow').hidden = true;
+        result.innerHTML = `<span>Canlı takip · ${board.site}</span><strong class="san">Hamle sırası belirsiz</strong><span>Tahtadan hamle sırası doğrulanamadı; güvenlik için bekliyorum.</span>`;
+      }
+      return;
+    }
     if (trackedTurn !== ownColor) {
       analysisGeneration++;
       stopStockfish();
