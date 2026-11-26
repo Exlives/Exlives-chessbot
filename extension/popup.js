@@ -1047,8 +1047,27 @@ function setAutoPlay(enabled) {
   }
 }
 autoPlayToggle.addEventListener('click', () => setAutoPlay(!autoPlay));
+const depthSelect = document.querySelector('#depth');
+const savedDepth = localStorage.getItem('analysisDepth');
+if ([...depthSelect.options].some(option => option.value === savedDepth)) {
+  depthSelect.value = savedDepth;
+}
+depthSelect.addEventListener('change', async () => {
+  localStorage.setItem('analysisDepth', depthSelect.value);
+  if (!liveTracking || autoMoveInProgress) return;
+  const activeSignature = analysisInProgressSignature;
+  if (activeSignature) {
+    analysisGeneration++;
+    stopStockfish();
+    while (analysisInProgressSignature === activeSignature) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
+  lastAnalyzedWorldChessSignature = null;
+  if (liveTracking && !autoMoveInProgress) await scanPosition(true);
+});
 // Preload the engine that matches the selected analysis budget.
-const initialSearchTimeMs = Number(document.querySelector('#depth').selectedOptions[0].dataset.time);
+const initialSearchTimeMs = Number(depthSelect.selectedOptions[0].dataset.time);
 void getStockfish().warmup(initialSearchTimeMs <= 800).catch(() => {});
 // Start with auto-play and live tracking enabled; the user can turn it off.
 setAutoPlay(true);
