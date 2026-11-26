@@ -356,6 +356,7 @@ let lastOpponentMove = null;
 let lastHistoryPly = 0;
 let lastFlipped = null;
 let lastGameKey = null;
+let worldChessHistoryPending = false;
 let scanning = false;
 let ownColor = ownColorSelect.value;
 let liveTracking = true;
@@ -383,8 +384,12 @@ function errorText(error, fallback) {
 async function readCurrentBoard() {
   const params = new URLSearchParams(location.search);
   const tabId = Number(params.get('tabId'));
-  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  const tab = Number.isInteger(tabId) && tabId > 0 ? await chrome.tabs.get(tabId) : activeTab;
+  let tab;
+  if (Number.isInteger(tabId) && tabId > 0) tab = await chrome.tabs.get(tabId);
+  else {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    tab = activeTab;
+  }
   if (!tab?.id) throw new Error('Etkin satranç sekmesini bulamadım.');
   if (!/^https:\/\/(?:[^/]+\.)?(?:chess\.com|lichess\.org|worldchess\.com)\//i.test(tab.url || '')) {
     throw new Error('Bağlı sekme desteklenen bir satranç sitesi değil. Satranç sekmesine geçip uzantı simgesine tekrar tıkla.');
@@ -662,7 +667,7 @@ async function analyzeBoard(board, turn, game) {
   const explanation = explainMove(game, move, search.info);
   result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
   showArrow(move, board.flipped);
-  void showArrowOnSite(move, board);
+  if (!autoPlay) void showArrowOnSite(move, board);
   if (autoPlay && !autoMoveInProgress) {
     const signature = getSignature(board);
     if (autoAppliedSignature !== signature) {
@@ -715,11 +720,15 @@ async function scanPosition(force = false) {
     let gameKey = getGameKey(tab);
     let signature = getSignature(board);
     let changed = signature !== lastSignature;
+    const worldChessHistoryChanged = board.site === 'World Chess' &&
+      (board.moveHistory || []).length !== lastHistoryPly;
+    if (board.site !== 'World Chess') worldChessHistoryPending = false;
     let newGameDetected = lastSignature !== null && (
       (gameKey && lastGameKey && gameKey !== lastGameKey) ||
       (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
     );
-    if (!changed && !newGameDetected && !force && trackedTurn !== null) return;
+    if (!changed && !newGameDetected && !force && trackedTurn !== null &&
+        !worldChessHistoryChanged && !worldChessHistoryPending) return;
     // Wait for animations to settle, then read the board again. This avoids
     // treating an in-flight piece as a second move or missing the reply.
     if (changed && lastSignature !== null) {
@@ -808,6 +817,17 @@ async function scanPosition(force = false) {
     lastGameKey = gameKey;
     lastPieces = { ...board.pieces };
     latestBoard = board;
+    const worldChessHistoryNeedsSync = board.site === 'World Chess' &&
+      moveHistory.length > 0 && !historyIsCurrent;
+    worldChessHistoryPending = worldChessHistoryNeedsSync;
+    if (worldChessHistoryNeedsSync) {
+      analysisGeneration++;
+      stopStockfish();
+      if (!result.textContent.includes('Hamle geçmişi eşleştiriliyor')) {
+        result.innerHTML = `<span>Canlı takip · ${board.site}</span><strong class="san">Konum doğrulanıyor</strong><span>Hamle geçmişi eşleştiriliyor; doğrulanınca devam edeceğim.</span>`;
+      }
+      return;
+    }
     if (trackedTurn === null) {
       if (previousTurn !== null || changed || force) {
         analysisGeneration++;
