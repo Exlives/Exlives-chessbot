@@ -183,11 +183,11 @@ function getPositionState(board, fallbackTurn) {
   const historyIsCurrent = (moveHistory.length > 0 || initialPosition) &&
     game.history().length === moveHistory.length &&
     matchesBoard(game, board.pieces);
-  const turn = historyIsCurrent
-    ? game.turn()
-    : board.turn === 'w' || board.turn === 'b'
-      ? board.turn
-      : initialPosition ? 'w' : null;
+  const historyTurn = historyIsCurrent ? game.turn() : null;
+  const boardTurn = board.turn === 'w' || board.turn === 'b' ? board.turn : null;
+  const turn = historyTurn && boardTurn && historyTurn !== boardTurn
+    ? null
+    : historyTurn || boardTurn || (initialPosition ? 'w' : null);
   return { game, moveHistory, historyIsCurrent, turn };
 }
 function gameAfterSingleLegalMove(game, pieces) {
@@ -724,7 +724,7 @@ async function analyzeBoard(board, turn, game) {
   if (generation !== analysisGeneration) return;
   const currentPosition = currentBoard.error ? null : getPositionState(currentBoard, ownColor);
   if (currentBoard.error || getSignature(currentBoard) !== signature ||
-      (currentPosition?.turn && currentPosition.turn !== turn)) {
+      currentPosition?.turn !== turn) {
     const invalidationGeneration = ++analysisGeneration;
     stopStockfish();
     await clearArrowOnSite();
@@ -846,6 +846,7 @@ async function scanPosition(force = false) {
     let signature = getSignature(board);
     let changed = signature !== lastSignature;
     if (changed) lastAnalyzedWorldChessSignature = null;
+    const boardTurnChanged = board.turn != null && board.turn !== trackedTurn;
     const worldChessHistoryChanged = board.site === 'World Chess' &&
       (board.moveHistory || []).length !== lastHistoryPly;
     if (board.site !== 'World Chess') {
@@ -865,7 +866,7 @@ async function scanPosition(force = false) {
     }
     if (gameFinished && !newGameDetected) return;
     if (!changed && !newGameDetected && !force && trackedTurn !== null &&
-        !worldChessHistoryChanged && !worldChessHistoryPending) return;
+        !boardTurnChanged && !worldChessHistoryChanged && !worldChessHistoryPending) return;
     // Wait for animations to settle, then read the board again. This avoids
     // treating an in-flight piece as a second move or missing the reply.
     if (changed && lastSignature !== null) {
@@ -1011,7 +1012,7 @@ async function scanPosition(force = false) {
         if (mover !== ownColor) lastOpponentMove = moveHistory[ply];
       }
       lastHistoryPly = moveHistory.length;
-    } else if (observedTurn) {
+    } else {
       trackedTurn = observedTurn;
     }
     if (board.site === 'World Chess' && !historyIsCurrent) lastHistoryPly = moveHistory.length;
