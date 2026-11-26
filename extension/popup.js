@@ -9,6 +9,61 @@ let sourceTabId = null;
 let miniMode = false;
 let miniWindowId = null;
 let pinningMiniWindow = false;
+let fittingMiniWindow = false;
+let miniFitScheduled = false;
+
+const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+
+function scheduleMiniFit() {
+  if (!miniMode || miniFitScheduled) return;
+  miniFitScheduled = true;
+  void nextFrame().then(() => {
+    miniFitScheduled = false;
+    return fitMiniWindow();
+  });
+}
+
+async function fitMiniWindow() {
+  if (!miniMode || fittingMiniWindow) return;
+  fittingMiniWindow = true;
+  try {
+    const win = await chrome.windows.getCurrent();
+    const displays = await chrome.system.display.getInfo();
+    const display = displays.find(item => item.isPrimary) || displays[0];
+    const area = display?.workArea;
+    if (!area || win.id == null) return;
+
+    const width = Math.max(280, Math.min(560, area.width - 16));
+    const frameWidth = Math.max(0, window.outerWidth - window.innerWidth);
+    document.body.style.width = `${Math.max(280, width - frameWidth)}px`;
+    const result = document.querySelector('#result');
+    result.style.maxHeight = '';
+    result.style.overflowY = '';
+    await nextFrame();
+
+    const frameHeight = Math.max(0, window.outerHeight - window.innerHeight);
+    const maxHeight = Math.max(200, area.height - 16);
+    const main = document.querySelector('main');
+    const contentHeight = Math.max(main.scrollHeight, document.documentElement.scrollHeight);
+    let height = Math.min(maxHeight, Math.ceil(contentHeight + frameHeight));
+
+    if (contentHeight + frameHeight > maxHeight) {
+      const fixedContentHeight = Math.max(0, contentHeight - result.scrollHeight);
+      result.style.maxHeight = `${Math.max(90, maxHeight - frameHeight - fixedContentHeight)}px`;
+      result.style.overflowY = 'auto';
+      await nextFrame();
+      height = maxHeight;
+    }
+
+    const left = area.left + area.width - width;
+    const top = area.top + 8;
+    if (win.width !== width || win.height !== height || win.left !== left || win.top !== top) {
+      await chrome.windows.update(win.id, { width, height, left, top });
+    }
+  } finally {
+    fittingMiniWindow = false;
+  }
+}
 
 async function setMiniMode(enabled) {
   miniMode = enabled;
@@ -19,8 +74,11 @@ async function setMiniMode(enabled) {
   const display = displays.find(item => item.isPrimary) || displays[0];
   const area = display?.workArea;
   if (!area || win.id == null) return;
-  const width = enabled ? 420 : Math.min(520, Math.max(320, area.width - 24));
+  const width = enabled
+    ? Math.max(280, Math.min(560, area.width - 16))
+    : Math.min(520, Math.max(320, area.width - 24));
   const height = enabled ? 300 : Math.min(1000, Math.max(560, area.height));
+  if (!enabled) document.body.style.width = '';
   await chrome.windows.update(win.id, {
     width, height,
     left: area.left + area.width - width,
@@ -30,6 +88,7 @@ async function setMiniMode(enabled) {
   const toggle = document.querySelector('#mini-toggle');
   toggle.title = enabled ? 'Pencereyi büyüt' : 'Küçük pencereye geç';
   toggle.setAttribute('aria-label', toggle.title);
+  if (enabled) scheduleMiniFit();
 }
 
 chrome.windows.onBoundsChanged.addListener(async win => {
@@ -38,12 +97,23 @@ chrome.windows.onBoundsChanged.addListener(async win => {
   const display = displays.find(item => item.isPrimary) || displays[0];
   const area = display?.workArea;
   if (!area) return;
-  const target = { left: area.left + area.width - 420, top: area.top + 8, width: 420, height: 300 };
-  if (Math.abs(win.left - target.left) < 2 && Math.abs(win.top - target.top) < 2 && win.width === target.width && win.height === target.height) return;
+  const target = { left: area.left + area.width - win.width, top: area.top + 8 };
+  if (Math.abs(win.left - target.left) < 2 && Math.abs(win.top - target.top) < 2) {
+    scheduleMiniFit();
+    return;
+  }
   pinningMiniWindow = true;
   try { await chrome.windows.update(win.id, target); }
   finally { pinningMiniWindow = false; }
+  scheduleMiniFit();
 });
+
+new MutationObserver(scheduleMiniFit).observe(result, {
+  childList: true,
+  characterData: true,
+  subtree: true
+});
+window.addEventListener('resize', scheduleMiniFit);
 
 // Chrome extensions cannot set the OS-level always-on-top flag for a window.
 // Keep the compact helper above other Chrome windows by raising it whenever
