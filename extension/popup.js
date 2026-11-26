@@ -588,19 +588,23 @@ async function applyMoveOnSite(move, board) {
     return { error: `Lichess oyun sekmesini doğrulayamadım: ${error.message}` };
   }
   const sendMoveInput = async mode => {
-    let inputBoard = board;
-    if (board.site !== 'World Chess') {
-      try {
-        inputBoard = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
-      } catch (error) {
-        return { error: `Hamle öncesi tahta ölçülerini yenileyemedim: ${error.message}` };
-      }
-      if (!inputBoard || inputBoard.error) {
-        return { error: inputBoard?.error || 'Hamle öncesi tahta ölçüleri alınamadı.' };
-      }
-      if (getSignature(inputBoard) !== getSignature(board)) {
-        return { error: 'Tahta hamle gönderilmeden önce değişti; yeni konumu analiz ediyorum.' };
-      }
+    const { board: inputBoard } = await readCurrentBoard();
+    if (!inputBoard || inputBoard.error) {
+      return { error: inputBoard?.error || 'Hamle öncesi tahta ölçüleri alınamadı.' };
+    }
+    if (getSignature(inputBoard) !== getSignature(board)) {
+      return { error: 'Tahta hamle gönderilmeden önce değişti; yeni konumu analiz ediyorum.' };
+    }
+    const inputPosition = getPositionState(inputBoard, ownColor);
+    const currentTurnVerified = inputBoard.site !== 'World Chess'
+      ? inputPosition.turn === ownColor
+      : (inputPosition.historyIsCurrent || inputPosition.moveHistory.length > 0) &&
+        inputPosition.turn === ownColor;
+    const verifiedWorldChessTurn = inputBoard.site === 'World Chess' &&
+      verifiedWorldChessPosition?.signature === getSignature(inputBoard) &&
+      verifiedWorldChessPosition.game.turn() === ownColor;
+    if (!currentTurnVerified && !verifiedWorldChessTurn) {
+      return { error: 'Hamle gönderilmeden önce sıra doğrulanamadı; rakibin sırasındayken hamle yapmıyorum.' };
     }
     return chrome.runtime.sendMessage({
       type: 'APPLY_TRUSTED_CHESS_MOVE',
@@ -724,11 +728,17 @@ async function analyzeBoard(board, turn, game) {
   const searchTimeMs = autoPlay && selectedDepth.value === '12'
     ? 500
     : Number(selectedDepth.dataset.time);
-  const search = await engine.search(game.fen(), searchDepth, info => {
+  let search;
+  try {
+    search = await engine.search(game.fen(), searchDepth, info => {
+      if (generation !== analysisGeneration) return;
+      const score = scoreText(info);
+      result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
+    }, searchTimeMs);
+  } catch (error) {
     if (generation !== analysisGeneration) return;
-    const score = scoreText(info);
-    result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
-  }, searchTimeMs);
+    throw error;
+  }
   if (generation !== analysisGeneration) return;
   const { board: currentBoard } = await readCurrentBoard();
   if (generation !== analysisGeneration) return;
@@ -757,6 +767,7 @@ async function analyzeBoard(board, turn, game) {
   if (autoPlay && !autoMoveInProgress) {
     if (autoAppliedSignature !== signature) {
       autoMoveInProgress = true;
+      let moveApplied = false;
       try {
         if (generation !== analysisGeneration || !autoPlay) return;
         const { board: currentBoard } = await readCurrentBoard();
@@ -790,6 +801,7 @@ async function analyzeBoard(board, turn, game) {
         } else if (applied?.changed === false) {
           result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle gönderildi, ancak tahtada değişiklik doğrulanamadı.</span>');
         } else {
+          moveApplied = true;
           autoAppliedSignature = signature;
           const playedGame = new Chess(game.fen());
           playedGame.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
@@ -801,7 +813,7 @@ async function analyzeBoard(board, turn, game) {
         }
       } finally {
         autoMoveInProgress = false;
-        if (liveTracking) forcedScanQueued = true;
+        if (liveTracking && moveApplied) forcedScanQueued = true;
       }
     }
   }
@@ -1059,8 +1071,10 @@ async function scanPosition(force = false) {
     }
     if (trackedTurn === null) {
       if (previousTurn !== null || changed || force) {
-        analysisGeneration++;
-        stopStockfish();
+        if (!autoMoveInProgress) {
+          analysisGeneration++;
+          stopStockfish();
+        }
         await clearArrowOnSite();
         document.querySelector('#move-arrow').hidden = true;
         result.innerHTML = `<span>Canlı takip · ${board.site}</span><strong class="san">Hamle sırası belirsiz</strong><span>Tahtadan hamle sırası doğrulanamadı; güvenlik için bekliyorum.</span>`;
@@ -1069,8 +1083,10 @@ async function scanPosition(force = false) {
     }
     if (trackedTurn !== ownColor) {
       if (board.site === 'World Chess' && worldChessHistoryPending && !changed) return;
-      analysisGeneration++;
-      stopStockfish();
+      if (!autoMoveInProgress) {
+        analysisGeneration++;
+        stopStockfish();
+      }
       await clearArrowOnSite();
       document.querySelector('#move-arrow').hidden = true;
       const opponentLine = lastOpponentMove ? `<span class="opponent-move">Rakibin hamlesi: ${lastOpponentMove}</span>` : '';

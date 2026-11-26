@@ -24,23 +24,45 @@ export class StockfishEngine {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
+    this.readyTimeout = setTimeout(() => {
+      if (!this.rejectReady) return;
+      this.failed = true;
+      const error = new Error('Stockfish motoru zamanında hazır olmadı.');
+      this.resolveReady = null;
+      const rejectReady = this.rejectReady;
+      this.rejectReady = null;
+      this.worker.terminate();
+      rejectReady(error);
+    }, 30000);
     this.worker.onmessage = event => this.onMessage(String(event.data));
     this.worker.onerror = event => {
       event.preventDefault?.();
       this.failed = true;
+      clearTimeout(this.readyTimeout);
       const error = new Error(workerErrorMessage(event.error, event));
       if (event.error?.stack) error.stack = event.error.stack;
       this.rejectReady?.(error);
-      this.currentSearch?.resolveDone?.();
-      this.currentSearch?.reject(error);
+      this.resolveReady = null;
+      this.rejectReady = null;
+      if (this.currentSearch) {
+        clearTimeout(this.currentSearch.timeoutId);
+        this.currentSearch.resolveDone?.();
+        this.currentSearch.reject(error);
+      }
       this.currentSearch = null;
     };
     this.worker.onmessageerror = () => {
       this.failed = true;
+      clearTimeout(this.readyTimeout);
       const error = new Error('Stockfish worker mesajı okunamadı. Uzantıyı chrome://extensions sayfasından yenileyin.');
       this.rejectReady?.(error);
-      this.currentSearch?.resolveDone?.();
-      this.currentSearch?.reject(error);
+      this.resolveReady = null;
+      this.rejectReady = null;
+      if (this.currentSearch) {
+        clearTimeout(this.currentSearch.timeoutId);
+        this.currentSearch.resolveDone?.();
+        this.currentSearch.reject(error);
+      }
       this.currentSearch = null;
     };
     this.worker.postMessage('uci');
@@ -56,6 +78,7 @@ export class StockfishEngine {
       return;
     }
     if (line === 'readyok' && this.resolveReady) {
+      clearTimeout(this.readyTimeout);
       this.resolveReady();
       this.resolveReady = null;
       this.rejectReady = null;
@@ -76,6 +99,7 @@ export class StockfishEngine {
     }
     if (line.startsWith('bestmove ')) {
       const uci = line.split(/\s+/)[1];
+      clearTimeout(current.timeoutId);
       this.currentSearch = null;
       current.resolveDone?.();
       current.resolve({ uci: uci === '(none)' ? null : uci, info: current.info });
@@ -84,15 +108,28 @@ export class StockfishEngine {
 
   async search(fen, depth, onInfo, timeMs) {
     await this.ready;
+    if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
     if (this.currentSearch) {
       const previous = this.currentSearch;
       this.worker.postMessage('stop');
       await previous.done;
+      if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
     }
     return new Promise((resolve, reject) => {
       let resolveDone;
       const done = new Promise(resolveFinished => { resolveDone = resolveFinished; });
-      this.currentSearch = { resolve, reject, onInfo, info: null, done, resolveDone };
+      const current = {
+        resolve, reject, onInfo, info: null, done, resolveDone,
+        timeoutId: setTimeout(() => {
+          if (this.currentSearch !== current) return;
+          this.failed = true;
+          this.currentSearch = null;
+          this.worker.terminate();
+          resolveDone();
+          reject(new Error('Stockfish analizi yanıt vermedi; motor yeniden başlatılmalı.'));
+        }, Math.max(15000, timeMs + 10000))
+      };
+      this.currentSearch = current;
       this.worker.postMessage(`position fen ${fen}`);
       this.worker.postMessage(timeMs
         ? `go depth ${depth} movetime ${timeMs}`
@@ -105,7 +142,22 @@ export class StockfishEngine {
   }
 
   terminate() {
+    clearTimeout(this.readyTimeout);
     this.worker.terminate();
+    this.failed = true;
+    if (this.rejectReady) {
+      const rejectReady = this.rejectReady;
+      this.resolveReady = null;
+      this.rejectReady = null;
+      rejectReady(new Error('Stockfish motoru yeniden başlatıldı.'));
+    }
+    if (this.currentSearch) {
+      const current = this.currentSearch;
+      this.currentSearch = null;
+      clearTimeout(current.timeoutId);
+      current.resolveDone?.();
+      current.reject(new Error('Stockfish motoru yeniden başlatıldı.'));
+    }
   }
 }
 
@@ -118,7 +170,7 @@ class EngineManager {
   }
 
   selectEngine(useLite) {
-    if (this.engine && this.usingLite === useLite) return;
+    if (this.engine && this.usingLite === useLite && !this.engine.failed) return;
     this.engine?.terminate();
     try {
       this.engine = useLite
