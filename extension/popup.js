@@ -260,6 +260,17 @@ async function readWorldChessBoard(tabId) {
     target: { tabId },
     func: () => {
       const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const terminalText = /\b(checkmate|stalemate|draw|resign(?:ed|s)?|wins?|won|lost|victory|defeat|timeout|flagged|abandoned|game over|game ended|finished|ended)\b|oyun\s+bitti|berabere|terk(?:\s+etti)?|kazandı|kaybetti|süre\s+doldu|\bmat\b/i;
+      const gameOver = [...document.querySelectorAll(
+        '.game__result, .result-wrap, .game-over-modal, wc-chess-game-over-modal, [class*="game-over"], [class*="gameOver"], [class*="game-result"], [data-testid*="game-over"], [data-testid*="game-result"], [data-cy*="game-result"]'
+      )].some(element => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!rect.width || !rect.height || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+        if (element.matches('wc-chess-game-over-modal, [class*="game-over"], [class*="gameOver"]')) return true;
+        return text.length > 0 && text.length <= 400 && terminalText.test(text);
+      });
       const boards = [...document.querySelectorAll('[data-cg-type="board"]')]
         .map(board => ({ board, rect: board.getBoundingClientRect() }))
         .filter(({ board, rect }) => {
@@ -339,6 +350,7 @@ async function readWorldChessBoard(tabId) {
         viewport,
         flipped,
         bottomColor,
+        gameOver,
         turn: moveHistory.length % 2 ? 'b' : (moveHistory.length || isInitialPosition ? 'w' : null)
       };
     }
@@ -377,6 +389,7 @@ let analysisInProgressSignature = null;
 let analysisInProgressToken = 0;
 let scanning = false;
 let forcedScanQueued = false;
+let gameFinished = false;
 let ownColor = ownColorSelect.value;
 let liveTracking = true;
 let pollTimer = null;
@@ -647,8 +660,19 @@ function getSignature(board) {
 function getGameKey(tab) {
   try {
     const url = new URL(tab?.url || '');
-    const match = url.pathname.match(/^\/[^/]+\/game\/([^/]+)/i) || url.pathname.match(/^\/game\/([^/]+)/i);
-    return url.hostname.endsWith('worldchess.com') && match ? `${url.hostname}:${match[1]}` : null;
+    if (url.hostname.endsWith('worldchess.com')) {
+      const match = url.pathname.match(/^\/[^/]+\/game\/([^/]+)/i) || url.pathname.match(/^\/game\/([^/]+)/i);
+      return match ? `${url.hostname}:${match[1]}` : null;
+    }
+    if (url.hostname.endsWith('chess.com')) {
+      const match = url.pathname.match(/\/game\/(?:live|daily)\/([^/]+)/i);
+      return match ? `${url.hostname}:${match[1]}` : null;
+    }
+    if (url.hostname.endsWith('lichess.org')) {
+      const match = url.pathname.match(/^\/([a-z0-9]{8})(?:\/(?:white|black))?\/?$/i);
+      return match ? `${url.hostname}:${match[1]}` : null;
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -753,6 +777,7 @@ async function analyzeBoard(board, turn, game) {
         }
       } finally {
         autoMoveInProgress = false;
+        if (liveTracking) forcedScanQueued = true;
       }
     }
   }
@@ -762,8 +787,36 @@ async function analyzeBoard(board, turn, game) {
   });
 }
 
+async function waitForNextGame(board, signature, gameKey) {
+  if (!gameFinished) {
+    gameFinished = true;
+    analysisGeneration++;
+    stopStockfish();
+    await clearArrowOnSite();
+    document.querySelector('#move-arrow').hidden = true;
+    boardPreview.hidden = true;
+    autoAppliedSignature = null;
+  }
+  if (signature && board.pieces) {
+    lastSignature = signature;
+    lastPieces = { ...board.pieces };
+    lastFlipped = board.flipped;
+    lastGameKey = gameKey;
+    latestBoard = board;
+    if (Array.isArray(board.moveHistory)) lastHistoryPly = board.moveHistory.length;
+  } else {
+    lastSignature = '[]';
+    lastPieces = {};
+    lastFlipped = null;
+    lastGameKey = gameKey || 'game-finished';
+    lastHistoryPly = 0;
+  }
+  trackedTurn = null;
+  result.textContent = 'Oyun bitti. Yeni oyun başlayana kadar bekliyorum.';
+}
+
 async function scanPosition(force = false) {
-  if (scanning || autoMoveInProgress) {
+  if (scanning || (autoMoveInProgress && force)) {
     if (force) forcedScanQueued = true;
     return;
   }
@@ -771,7 +824,8 @@ async function scanPosition(force = false) {
   try {
     const { tab, board } = await readCurrentBoard();
     if (board.error) {
-      if (lastSignature === null) result.textContent = board.error;
+      if (board.gameOver) await waitForNextGame(board, null, getGameKey(tab));
+      else if (lastSignature === null) result.textContent = board.error;
       return;
     }
     let gameKey = getGameKey(tab);
@@ -791,6 +845,11 @@ async function scanPosition(force = false) {
       (gameKey && lastGameKey && gameKey !== lastGameKey) ||
       (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
     );
+    if (board.gameOver && !(gameFinished && newGameDetected)) {
+      await waitForNextGame(board, signature, gameKey);
+      return;
+    }
+    if (gameFinished && !newGameDetected) return;
     if (!changed && !newGameDetected && !force && trackedTurn !== null &&
         !worldChessHistoryChanged && !worldChessHistoryPending) return;
     // Wait for animations to settle, then read the board again. This avoids
@@ -798,7 +857,12 @@ async function scanPosition(force = false) {
     if (changed && lastSignature !== null) {
       await new Promise(resolve => setTimeout(resolve, BOARD_SETTLE_MS));
       const stable = await readCurrentBoard();
-      if (stable.board.error) return;
+      if (stable.board.error) {
+        if (stable.board.gameOver) {
+          await waitForNextGame(stable.board, null, getGameKey(stable.tab));
+        }
+        return;
+      }
       gameKey = getGameKey(stable.tab);
       board.pieces = stable.board.pieces;
       board.boardRect = stable.board.boardRect;
@@ -806,13 +870,20 @@ async function scanPosition(force = false) {
       board.flipped = stable.board.flipped;
       board.turn = stable.board.turn;
       board.moveHistory = stable.board.moveHistory;
+      board.gameOver = stable.board.gameOver;
       signature = getSignature(board);
       changed = signature !== lastSignature;
       newGameDetected = lastSignature !== null && (
         (gameKey && lastGameKey && gameKey !== lastGameKey) ||
         (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
       );
+      if (board.gameOver && !(gameFinished && newGameDetected)) {
+        await waitForNextGame(board, signature, gameKey);
+        return;
+      }
     }
+    if (gameFinished && !newGameDetected) return;
+    if (newGameDetected) gameFinished = false;
     // A full starting setup appearing after a played position signals a new game.
     // Reset remembered state and infer the player's side from board orientation.
     if (newGameDetected) {
@@ -830,6 +901,7 @@ async function scanPosition(force = false) {
       autoAppliedSignature = null;
       worldChessHistoryPending = false;
       analysisInProgressSignature = null;
+      gameFinished = false;
       lastSignature = null;
       ownColor = bottomPlayerColor(board);
       ownColorSelect.value = ownColor;
@@ -934,6 +1006,10 @@ async function scanPosition(force = false) {
     const hasVerifiedWorldChessPosition = verifiedWorldChessPosition?.signature === signature;
     const hasSpeculativeWorldChessPosition = speculativeWorldChessPosition?.signature === signature;
     worldChessHistoryPending = worldChessHistoryNeedsSync && !hasVerifiedWorldChessPosition;
+    if (positionGame.isGameOver()) {
+      await waitForNextGame(board, signature, gameKey);
+      return;
+    }
     if (worldChessHistoryPending && !hasSpeculativeWorldChessPosition && !observedTurn) {
       analysisGeneration++;
       stopStockfish();
@@ -964,13 +1040,18 @@ async function scanPosition(force = false) {
       document.querySelector('#move-arrow').hidden = true;
       const opponentLine = lastOpponentMove ? `<span class="opponent-move">Rakibin hamlesi: ${lastOpponentMove}</span>` : '';
       result.innerHTML = `<span>Canlı takip · ${board.site}</span><strong class="san">Rakibin sırası</strong>${opponentLine}<span>Tahtayı izliyorum; sıra sana gelince güncel konumdan ipucu vereceğim.</span>`;
-      try { await captureBoard(board); } catch { boardPreview.hidden = true; }
+      if (!miniMode) {
+        void captureBoard(board).catch(() => { boardPreview.hidden = true; });
+      }
       return;
     }
     // Let later polls see opponent moves while Stockfish searches in its worker.
     scanning = false;
     if (board.site === 'World Chess' && lastAnalyzedWorldChessSignature === signature) return;
-    if (analysisInProgressSignature === signature) return;
+    if (analysisInProgressSignature === signature) {
+      if (force) forcedScanQueued = true;
+      return;
+    }
     const analysisToken = ++analysisInProgressToken;
     analysisInProgressSignature = signature;
     if (board.site === 'World Chess') lastAnalyzedWorldChessSignature = signature;
@@ -985,7 +1066,7 @@ async function scanPosition(force = false) {
     result.textContent = errorText(error, 'Tahtayı okuyamadım. Satranç sekmesini yenileyip tekrar dene.');
   } finally {
     scanning = false;
-    if (forcedScanQueued && !autoMoveInProgress) {
+    if (forcedScanQueued && !autoMoveInProgress && !analysisInProgressSignature) {
       forcedScanQueued = false;
       setTimeout(() => { void scanPosition(true); }, 0);
     }
@@ -1003,6 +1084,7 @@ document.querySelector('#show-on-board').addEventListener('click', async () => {
 });
 document.querySelector('#new-game').addEventListener('click', () => {
   lastSignature = null;
+  gameFinished = false;
   trackedTurn = null;
   latestBoard = null;
   lastPieces = null;
@@ -1088,16 +1170,24 @@ if ([...depthSelect.options].some(option => option.value === savedDepth)) {
 }
 depthSelect.addEventListener('change', async () => {
   localStorage.setItem('analysisDepth', depthSelect.value);
-  if (!liveTracking || autoMoveInProgress) return;
-  const activeSignature = analysisInProgressSignature;
-  if (activeSignature) {
-    analysisGeneration++;
-    stopStockfish();
-    while (analysisInProgressSignature === activeSignature) {
-      await new Promise(resolve => setTimeout(resolve, 25));
+  const selectedValue = depthSelect.value;
+  const useLite = Number(depthSelect.selectedOptions[0].dataset.time) <= 800;
+  if (!autoMoveInProgress) {
+    const activeSignature = analysisInProgressSignature;
+    if (activeSignature) {
+      analysisGeneration++;
+      stopStockfish();
+      while (analysisInProgressSignature === activeSignature) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
     }
+    if (liveTracking) lastAnalyzedWorldChessSignature = null;
   }
-  lastAnalyzedWorldChessSignature = null;
+  void getStockfish().warmup(useLite).catch(error => {
+    if (depthSelect.value === selectedValue && !analysisInProgressSignature && !gameFinished) {
+      result.textContent = errorText(error, 'Stockfish motoru hazırlanamadı.');
+    }
+  });
   if (liveTracking && !autoMoveInProgress) await scanPosition(true);
 });
 // Preload the engine that matches the selected analysis budget.

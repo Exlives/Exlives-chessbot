@@ -89,6 +89,23 @@ function readMoveHistory() {
   return lichessMoves || [];
 }
 
+function hasTerminalGameResult() {
+  const selectors = [
+    '.game__result', '.result-wrap', '.game-over-modal', 'wc-chess-game-over-modal',
+    '[class*="game-over"]', '[class*="gameOver"]', '[class*="game-result"]',
+    '[data-testid*="game-over"]', '[data-testid*="game-result"]', '[data-cy*="game-result"]'
+  ].join(',');
+  const terminalText = /\b(checkmate|stalemate|draw|resign(?:ed|s)?|wins?|won|lost|victory|defeat|timeout|flagged|abandoned|game over|game ended|finished|ended)\b|oyun\s+bitti|berabere|terk(?:\s+etti)?|kazandı|kaybetti|süre\s+doldu|\bmat\b/i;
+  return [...document.querySelectorAll(selectors)].some(element => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (!rect.width || !rect.height || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    if (element.matches('wc-chess-game-over-modal, [class*="game-over"], [class*="gameOver"]')) return true;
+    const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+    return text.length > 0 && text.length <= 400 && terminalText.test(text);
+  });
+}
+
 function getBoardPosition(rectHint = null, includeElement = false) {
   // Lichess uses the custom element <cg-board>; Chess.com uses <wc-chess-board>.
   // Search open shadow roots too, as some page layouts mount the board there.
@@ -129,7 +146,10 @@ function getBoardPosition(rectHint = null, includeElement = false) {
       }
       return b.visibleArea - a.visibleArea || b.cells.size - a.cells.size;
     });
-  if (!candidates.length) return { error: 'Bu sayfada okunabilir bir satranç tahtası bulamadım. Canlı oyun sekmesinde 2B tahtayı açıp yeniden dene.' };
+  if (!candidates.length) return {
+    error: 'Bu sayfada okunabilir bir satranç tahtası bulamadım. Canlı oyun sekmesinde 2B tahtayı açıp yeniden dene.',
+    gameOver: hasTerminalGameResult()
+  };
   const { board, cells, rect } = candidates[0];
   const flipped = board.classList.contains('orientation-black') || isBoardFlipped(board);
   let turn = null;
@@ -150,6 +170,7 @@ function getBoardPosition(rectHint = null, includeElement = false) {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     flipped,
     turn,
+    gameOver: hasTerminalGameResult(),
     ...(includeElement ? { boardElement: board } : {})
   };
 }
