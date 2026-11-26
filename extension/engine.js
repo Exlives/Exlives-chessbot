@@ -15,7 +15,7 @@ function workerErrorMessage(workerError, event) {
 }
 
 export class StockfishEngine {
-  constructor(engineUrl, wasmUrl, threads = 1, hash = 32) {
+  constructor(engineUrl, wasmUrl, threads = 1, hash = 512) {
     // The WASM URL is supplied explicitly so extension worker path resolution is reliable.
     this.worker = new Worker(`${engineUrl}#${encodeURIComponent(wasmUrl)}`);
     this.failed = false;
@@ -122,11 +122,11 @@ class EngineManager {
     this.engine?.terminate();
     try {
       this.engine = useLite
-        ? new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32)
-        : new StockfishEngine(FULL_ENGINE_URL, FULL_WASM_URL, this.threads, 128);
+        ? new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 128)
+        : new StockfishEngine(FULL_ENGINE_URL, FULL_WASM_URL, this.threads, 512);
       this.usingLite = useLite;
     } catch {
-      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32);
+      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 128);
       this.usingLite = true;
     }
   }
@@ -138,10 +138,15 @@ class EngineManager {
     } catch (error) {
       if (this.usingLite || !this.engine.failed) throw error;
       this.engine.terminate();
-      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 32);
+      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 128);
       this.usingLite = true;
       return this.engine.search(fen, depth, onInfo, timeMs);
     }
+  }
+
+  warmup(useLite = false) {
+    this.selectEngine(useLite);
+    return this.engine.ready;
   }
 
   stop() {

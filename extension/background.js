@@ -1,5 +1,72 @@
 const appUrl = chrome.runtime.getURL('popup.html');
 
+function squareCenter(square, boardRect, flipped) {
+  if (!/^[a-h][1-8]$/.test(square)) throw new Error('Geçersiz satranç karesi.');
+  let file = square.charCodeAt(0) - 97;
+  let row = 8 - Number(square[1]);
+  if (flipped) {
+    file = 7 - file;
+    row = 7 - row;
+  }
+  return {
+    x: boardRect.x + (file + 0.5) * boardRect.width / 8,
+    y: boardRect.y + (row + 0.5) * boardRect.height / 8
+  };
+}
+
+async function dispatchTrustedChessMove(tabId, move, boardRect, flipped) {
+  if (!Number.isInteger(tabId) || !move?.from || !move?.to ||
+      !boardRect || ![boardRect.x, boardRect.y, boardRect.width, boardRect.height].every(Number.isFinite) ||
+      boardRect.width < 120 || boardRect.height < 120 ||
+      Math.abs(boardRect.width - boardRect.height) > Math.max(boardRect.width, boardRect.height) * 0.2) {
+    throw new Error('Satranç tahtası koordinatları geçersiz.');
+  }
+  const tab = await chrome.tabs.get(tabId);
+  const host = new URL(tab.url || '').hostname;
+  if (!/^(?:[^.]+\.)?(?:chess\.com|lichess\.org|worldchess\.com)$/i.test(host)) {
+    throw new Error('Hedef sekme desteklenen bir satranç sitesi değil.');
+  }
+  const from = squareCenter(move.from, boardRect, flipped);
+  const to = squareCenter(move.to, boardRect, flipped);
+  const target = { tabId };
+  await chrome.debugger.attach(target, '1.3');
+  try {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0
+    });
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1
+    });
+    for (let step = 1; step <= 8; step++) {
+      const progress = step / 8;
+      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: from.x + (to.x - from.x) * progress,
+        y: from.y + (to.y - from.y) * progress,
+        button: 'left', buttons: 1
+      });
+    }
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1
+    });
+  } finally {
+    await chrome.debugger.detach(target);
+  }
+  return { ok: true };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'APPLY_TRUSTED_CHESS_MOVE') return;
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) {
+    sendResponse({ error: 'Hamle isteğinin kaynağı doğrulanamadı.' });
+    return;
+  }
+  dispatchTrustedChessMove(message.tabId, message.move, message.boardRect, message.flipped)
+    .then(sendResponse)
+    .catch(error => sendResponse({ error: error?.message || String(error) }));
+  return true;
+});
+
 async function getWindowLayout() {
   try {
     const displays = await chrome.system.display.getInfo();

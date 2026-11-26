@@ -278,6 +278,12 @@ let liveTracking = true;
 let pollTimer = null;
 let analysisGeneration = 0;
 let autoDetectColor = true;
+let autoPlay = false;
+let autoAppliedSignature = null;
+
+// Keep board recognition responsive without repeatedly reading the page too aggressively.
+const BOARD_SETTLE_MS = 180;
+const LIVE_POLL_MS = 500;
 
 function errorText(error, fallback) {
   if (typeof error === 'string' && error.trim()) return error;
@@ -443,6 +449,43 @@ async function clearArrowOnSite() {
   try { await chrome.tabs.sendMessage(sourceTabId, { type: 'CLEAR_MOVE_ARROW' }); } catch { /* The tab may have closed. */ }
 }
 
+async function applyMoveOnSite(move, board) {
+  if (sourceTabId == null) return { error: 'Oyun sekmesi bulunamadı.' };
+  try {
+    const [pageState] = await chrome.scripting.executeScript({
+      target: { tabId: sourceTabId },
+      func: () => ({
+        isLichess: location.hostname === 'lichess.org',
+        isSpectator: /spectator/i.test(document.title) ||
+          [...document.querySelectorAll('[role="tab"], .tabs-horiz a, .game__meta')].some(el => /spectator room/i.test(el.textContent || ''))
+      })
+    });
+    if (pageState?.result?.isLichess && pageState.result.isSpectator) {
+      return { error: 'Bu Lichess sekmesi izleyici görünümünde; oyunda manuel hamle de yapılamıyor. Lichess’te “Play with the computer” üzerinden oyuncu oyunu başlatıp o sekmeyi seç.' };
+    }
+  } catch (error) {
+    return { error: `Lichess oyun sekmesini doğrulayamadım: ${error.message}` };
+  }
+  try {
+    const applied = await chrome.runtime.sendMessage({
+      type: 'APPLY_TRUSTED_CHESS_MOVE',
+      tabId: sourceTabId,
+      move,
+      flipped: board.flipped,
+      boardRect: board.boardRect
+    });
+    if (applied?.error) return applied;
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
+    if (!updated || updated.error || getSignature(updated) === getSignature(board)) {
+      return { error: 'Gerçek fare girdisi gönderildi ancak tahtadaki hamle doğrulanmadı.' };
+    }
+    return { ok: true, changed: true };
+  } catch (error) {
+    return { error: `Hamle uygulanamadı: ${error?.message || String(error)}` };
+  }
+}
+
 window.addEventListener('pagehide', () => { void clearArrowOnSite(); });
 
 function getSignature(board) {
@@ -481,8 +524,9 @@ async function analyzeBoard(board, turn, game) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   if (board.error) throw new Error(board.error);
   if (game.isGameOver()) throw new Error('Bu konumda yasal hamle yok. Sıradaki rengi kontrol et.');
-  let screenshotFailed = false;
-  try { await captureBoard(board); } catch { screenshotFailed = true; }
+  // The preview is independent from engine analysis. Start both at once so a
+  // screenshot/canvas decode cannot delay the first engine result.
+  const screenshotPromise = captureBoard(board).then(() => false).catch(() => true);
   if (generation !== analysisGeneration) return;
   const engine = getStockfish();
   const depthSelect = document.querySelector('#depth');
@@ -503,7 +547,31 @@ async function analyzeBoard(board, turn, game) {
   result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
   showArrow(move, board.flipped);
   await showArrowOnSite(move, board);
-  if (screenshotFailed) result.insertAdjacentHTML('beforeend', '<br><span>Tahta görüntüsü alınamadı; hamle önerisi hazır.</span>');
+  if (autoPlay) {
+    const signature = getSignature(board);
+    if (autoAppliedSignature !== signature) {
+      const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, board);
+      if (applied?.error) {
+        result.insertAdjacentHTML('beforeend', `<br><span class="explanation">Otomatik oyun: ${errorText(applied.error, 'Hamle uygulanamadı.')}</span>`);
+        if (/izleyici modunda/i.test(errorText(applied.error, ''))) {
+          autoPlay = false;
+          autoPlayToggle.setAttribute('aria-pressed', 'false');
+          autoPlayToggle.classList.remove('is-on');
+          autoPlayToggle.innerHTML = '<span class="toggle-dot"></span>Otomatik oyun: Kapalı';
+          setLiveTracking(false);
+        }
+      } else if (applied?.changed === false) {
+        result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle gönderildi, ancak tahtada değişiklik doğrulanamadı.</span>');
+      } else {
+        autoAppliedSignature = signature;
+        result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle tahtaya uygulandı.</span>');
+      }
+    }
+  }
+  screenshotPromise.then(screenshotFailed => {
+    if (generation !== analysisGeneration || !screenshotFailed) return;
+    result.insertAdjacentHTML('beforeend', '<br><span>Tahta görüntüsü alınamadı; hamle önerisi hazır.</span>');
+  });
 }
 
 async function scanPosition(force = false) {
@@ -526,7 +594,7 @@ async function scanPosition(force = false) {
     // Wait for animations to settle, then read the board again. This avoids
     // treating an in-flight piece as a second move or missing the reply.
     if (changed && lastSignature !== null) {
-      await new Promise(resolve => setTimeout(resolve, 350));
+      await new Promise(resolve => setTimeout(resolve, BOARD_SETTLE_MS));
       const stable = await readCurrentBoard();
       if (stable.board.error) return;
       gameKey = getGameKey(stable.tab);
@@ -645,13 +713,14 @@ document.querySelector('#new-game').addEventListener('click', () => {
   lastHistoryPly = 0;
   lastFlipped = null;
   lastGameKey = null;
+  autoAppliedSignature = null;
   analysisGeneration++;
   stopStockfish();
   clearArrowOnSite();
   ownColor = '';
   autoDetectColor = true;
   ownColorSelect.value = '';
-  document.querySelector('#depth').value = '12';
+  document.querySelector('#depth').value = '20';
   boardPreview.hidden = true;
   document.querySelector('#move-arrow').hidden = true;
   result.textContent = 'Tahtanın yönünden taş rengin algılanıyor…';
@@ -668,6 +737,7 @@ ownColorSelect.addEventListener('change', async () => {
   lastHistoryPly = 0;
   lastFlipped = null;
   lastGameKey = null;
+  autoAppliedSignature = null;
   analysisGeneration++;
   stopStockfish();
   await clearArrowOnSite();
@@ -684,9 +754,25 @@ function setLiveTracking(enabled) {
   if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
   if (enabled) {
     scanPosition();
-    pollTimer = setInterval(() => scanPosition(), 1100);
+    pollTimer = setInterval(() => scanPosition(), LIVE_POLL_MS);
   }
 }
 liveToggle.addEventListener('click', () => setLiveTracking(!liveTracking));
+const autoPlayToggle = document.querySelector('#auto-play-toggle');
+function setAutoPlay(enabled) {
+  autoPlay = enabled;
+  autoPlayToggle.setAttribute('aria-pressed', String(enabled));
+  autoPlayToggle.classList.toggle('is-on', enabled);
+  autoPlayToggle.innerHTML = `<span class="toggle-dot"></span>Otomatik oyun: ${enabled ? 'Açık' : 'Kapalı'}`;
+  if (enabled) {
+    setLiveTracking(true);
+    result.textContent = 'Otomatik oyun açık. Sıra senin taşlarına geldiğinde en iyi hamleyi tahtaya uygulayacağım.';
+  } else {
+    result.textContent = 'Otomatik oyun kapalı.';
+  }
+}
+autoPlayToggle.addEventListener('click', () => setAutoPlay(!autoPlay));
+// Preload the default balanced engine while the board is being discovered.
+void getStockfish().warmup(false).catch(() => {});
 // Live tracking starts enabled; turn it off to analyze only on demand.
 setLiveTracking(true);
