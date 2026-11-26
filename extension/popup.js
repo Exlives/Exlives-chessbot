@@ -6,7 +6,9 @@ const boardPreview = document.querySelector('#board-preview');
 const boardImage = document.querySelector('#board-image');
 const ownColorSelect = document.querySelector('#own-color');
 let sourceTabId = null;
+let boardWatchTabId = null;
 let miniMode = false;
+let microMode = false;
 let miniWindowId = null;
 let pinningMiniWindow = false;
 let fittingMiniWindow = false;
@@ -15,7 +17,7 @@ let miniFitScheduled = false;
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
 
 function scheduleMiniFit() {
-  if (!miniMode || miniFitScheduled) return;
+  if (!miniMode || microMode || miniFitScheduled) return;
   miniFitScheduled = true;
   void nextFrame().then(() => {
     miniFitScheduled = false;
@@ -24,7 +26,7 @@ function scheduleMiniFit() {
 }
 
 async function fitMiniWindow() {
-  if (!miniMode || fittingMiniWindow) return;
+  if (!miniMode || microMode || fittingMiniWindow) return;
   fittingMiniWindow = true;
   try {
     const win = await chrome.windows.getCurrent();
@@ -67,6 +69,8 @@ async function fitMiniWindow() {
 
 async function setMiniMode(enabled) {
   miniMode = enabled;
+  microMode = false;
+  document.body.classList.remove('micro-mode');
   document.body.classList.toggle('mini-mode', enabled);
   const win = await chrome.windows.getCurrent();
   miniWindowId = win.id;
@@ -88,7 +92,40 @@ async function setMiniMode(enabled) {
   const toggle = document.querySelector('#mini-toggle');
   toggle.title = enabled ? 'Pencereyi büyüt' : 'Küçük pencereye geç';
   toggle.setAttribute('aria-label', toggle.title);
+  const microToggle = document.querySelector('#micro-toggle');
+  microToggle.textContent = 'Mini mod';
+  microToggle.title = 'Mini mod';
+  microToggle.setAttribute('aria-label', microToggle.title);
   if (enabled) scheduleMiniFit();
+}
+
+async function setMicroMode(enabled) {
+  if (!miniMode || microMode === enabled) return;
+  microMode = enabled;
+  document.body.classList.toggle('micro-mode', enabled);
+  document.body.style.width = enabled ? '100%' : '';
+
+  const toggle = document.querySelector('#micro-toggle');
+  toggle.textContent = enabled ? 'Mini moda dön' : 'Mini mod';
+  toggle.title = toggle.textContent;
+  toggle.setAttribute('aria-label', toggle.title);
+
+  const win = await chrome.windows.getCurrent();
+  const displays = await chrome.system.display.getInfo();
+  const display = displays.find(item => item.isPrimary) || displays[0];
+  const area = display?.workArea;
+  if (!area || win.id == null) return;
+
+  const width = enabled ? 230 : Math.max(280, Math.min(560, area.width - 16));
+  const height = enabled ? 88 : 300;
+  await chrome.windows.update(win.id, {
+    width,
+    height,
+    left: area.left + area.width - width,
+    top: area.top + area.height - height - 8,
+    focused: true
+  });
+  if (!enabled) scheduleMiniFit();
 }
 
 chrome.windows.onBoundsChanged.addListener(async win => {
@@ -125,7 +162,7 @@ let restoringMiniFocus = false;
 chrome.windows.onFocusChanged.addListener(async focusedWindowId => {
   if (!miniMode || restoringMiniFocus || focusedWindowId === chrome.windows.WINDOW_ID_NONE) return;
   const ownWindow = await chrome.windows.getCurrent();
-  if (ownWindow.id == null || focusedWindowId === ownWindow.id) return;
+  if (ownWindow.id == null || ownWindow.state === 'minimized' || focusedWindowId === ownWindow.id) return;
   restoringMiniFocus = true;
   try { await chrome.windows.update(ownWindow.id, { focused: true }); }
   catch { /* The helper may have closed while focus was changing. */ }
@@ -138,6 +175,7 @@ document.querySelector('#close-app').addEventListener('click', async () => {
   if (win.id != null) chrome.windows.remove(win.id);
 });
 document.querySelector('#mini-toggle').addEventListener('click', () => setMiniMode(!miniMode));
+document.querySelector('#micro-toggle').addEventListener('click', () => setMicroMode(!microMode));
 function getFen(piecesBySquare, turn) {
   let rows=[];for(let rank=8;rank>=1;rank--){let row='',empty=0;for(const file of 'abcdefgh'){const p=piecesBySquare[file+rank];if(!p)empty++;else{if(empty)row+=empty;empty=0;row+=p[0]==='w'?p[1].toUpperCase():p[1]}}if(empty)row+=empty;rows.push(row)}
   // Rights are inferred only when king and original rooks remain on their home squares.
@@ -354,7 +392,12 @@ async function readWorldChessBoard(tabId) {
       };
     }
   });
-  return injected?.result || null;
+  const board = injected?.result || null;
+  if (board && boardWatchTabId !== tabId) {
+    const watch = await chrome.tabs.sendMessage(tabId, { type: 'START_CHESS_BOARD_WATCH' });
+    if (watch?.ok) boardWatchTabId = tabId;
+  }
+  return board;
 }
 function showArrow(move, flipped) {
   const squarePoint = square => {
@@ -716,7 +759,9 @@ async function analyzeBoard(board, turn, game) {
   result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…</span><span>${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} için en iyi hamle aranıyor.</span>`;
   boardPreview.hidden = true;
   // Paint the status and snapshot the position before starting engine work.
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  if (document.visibilityState === 'visible') {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
   if (board.error) throw new Error(board.error);
   if (game.isGameOver()) throw new Error('Bu konumda yasal hamle yok. Sıradaki rengi kontrol et.');
   // The preview is independent from engine analysis. Start both at once so a
@@ -1225,6 +1270,11 @@ function setLiveTracking(enabled) {
     pollTimer = setInterval(() => scanPosition(), LIVE_POLL_MS);
   }
 }
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'CHESS_BOARD_CHANGED' || sender.id !== chrome.runtime.id ||
+      sender.tab?.id !== sourceTabId || !liveTracking) return;
+  void scanPosition(true);
+});
 liveToggle.addEventListener('click', () => setLiveTracking(!liveTracking));
 const autoPlayToggle = document.querySelector('#auto-play-toggle');
 function setAutoPlay(enabled) {

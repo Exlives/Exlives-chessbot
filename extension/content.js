@@ -1,6 +1,48 @@
 (() => {
 if (globalThis.__hamleChessContentLoaded) return;
 
+let watchedBoard = null;
+let boardMutationObserver = null;
+let boardReplacementObserver = null;
+let boardChangeQueued = false;
+
+function notifyBoardChanged() {
+  if (boardChangeQueued) return;
+  boardChangeQueued = true;
+  queueMicrotask(() => {
+    boardChangeQueued = false;
+    chrome.runtime.sendMessage({ type: 'CHESS_BOARD_CHANGED' }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
+function watchBoard(board) {
+  if (watchedBoard === board) return;
+  boardMutationObserver?.disconnect();
+  watchedBoard = board || null;
+  if (!watchedBoard) return;
+
+  boardMutationObserver = new MutationObserver(notifyBoardChanged);
+  boardMutationObserver.observe(watchedBoard, {
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-piece', 'data-role'],
+    childList: true,
+    subtree: true
+  });
+
+  if (!boardReplacementObserver) {
+    boardReplacementObserver = new MutationObserver(() => {
+      if (watchedBoard?.isConnected) return;
+      const replacement = getBoardPosition(null, true);
+      if (replacement.error) return;
+      watchBoard(replacement.boardElement);
+      notifyBoardChanged();
+    });
+    boardReplacementObserver.observe(document.documentElement, { childList: true, subtree: true });
+  }
+}
+
 function deepQueryAll(root, selector, found = []) {
   if (!root?.querySelectorAll) return found;
   const pending = [root];
@@ -223,8 +265,19 @@ window.addEventListener('focus', updateArrowGeometry);
 document.addEventListener('visibilitychange', updateArrowGeometry);
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'READ_CHESS_BOARD') {
-    const selected = message.rectHint ? getBoardPosition(message.rectHint) : null;
-    sendResponse(selected && !selected.error ? selected : getBoardPosition());
+    const selected = message.rectHint ? getBoardPosition(message.rectHint, true) : null;
+    const board = selected && !selected.error ? selected : getBoardPosition(null, true);
+    if (!board.error) watchBoard(board.boardElement);
+    const { boardElement, ...response } = board;
+    sendResponse(response);
+  }
+  if (message?.type === 'START_CHESS_BOARD_WATCH') {
+    const board = getBoardPosition(null, true);
+    if (board.error) sendResponse({ error: board.error });
+    else {
+      watchBoard(board.boardElement);
+      sendResponse({ ok: true });
+    }
   }
   if (message?.type === 'PICK_CHESS_BOARD') {
     startBoardPicker(sendResponse);
