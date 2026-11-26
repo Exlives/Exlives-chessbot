@@ -27,11 +27,32 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped, mode = 
   if (!/^(?:[^.]+\.)?(?:chess\.com|lichess\.org|worldchess\.com)$/i.test(host)) {
     throw new Error('Hedef sekme desteklenen bir satranç sitesi değil.');
   }
-  const from = squareCenter(move.from, boardRect, flipped);
-  const to = squareCenter(move.to, boardRect, flipped);
   const target = { tabId };
   await chrome.debugger.attach(target, '1.3');
   try {
+    let activeBoardRect = boardRect;
+    if (host.endsWith('worldchess.com')) {
+      const currentLayout = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+        expression: `(() => {
+          const candidates = [...document.querySelectorAll('[data-cg-type="board"].cg-board')]
+            .map(board => board.getBoundingClientRect())
+            .filter(rect => rect.width > 120 && rect.height > 120 &&
+              rect.right > 0 && rect.bottom > 0 &&
+              rect.left < innerWidth && rect.top < innerHeight)
+            .sort((a, b) => b.width * b.height - a.width * a.height);
+          const rect = candidates[0];
+          return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
+        })()`,
+        returnByValue: true
+      });
+      const rect = currentLayout?.result?.value;
+      if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
+        throw new Error('World Chess tahtasının güncel boyutlarını okuyamadım.');
+      }
+      activeBoardRect = rect;
+    }
+    const from = squareCenter(move.from, activeBoardRect, flipped);
+    const to = squareCenter(move.to, activeBoardRect, flipped);
     if (mode === 'click') {
       const clickSquare = async point => {
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
