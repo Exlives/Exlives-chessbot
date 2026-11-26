@@ -665,7 +665,9 @@ async function analyzeBoard(board, turn, game) {
   const depthSelect = document.querySelector('#depth');
   const selectedDepth = depthSelect.selectedOptions[0];
   const searchDepth = Number(depthSelect.value);
-  const searchTimeMs = Number(selectedDepth.dataset.time);
+  const searchTimeMs = autoPlay && selectedDepth.value === '12'
+    ? 500
+    : Number(selectedDepth.dataset.time);
   const search = await engine.search(game.fen(), searchDepth, info => {
     if (generation !== analysisGeneration) return;
     const score = scoreText(info);
