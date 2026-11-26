@@ -95,12 +95,11 @@ function hasTerminalGameResult() {
     '[class*="game-over"]', '[class*="gameOver"]', '[class*="game-result"]',
     '[data-testid*="game-over"]', '[data-testid*="game-result"]', '[data-cy*="game-result"]'
   ].join(',');
-  const terminalText = /\b(checkmate|stalemate|draw|resign(?:ed|s)?|wins?|won|lost|victory|defeat|timeout|flagged|abandoned|game over|game ended|finished|ended)\b|oyun\s+bitti|berabere|terk(?:\s+etti)?|kazandı|kaybetti|süre\s+doldu|\bmat\b/i;
+  const terminalText = /\b(checkmate|stalemate|draw|resign(?:ed|s)?|wins?|won|lost|victory|defeat|timeout|flagged|abandoned|game over|game ended)\b|\bgame\s+(?:has\s+)?(?:finished|ended)\b|oyun\s+(?:bitti|sona erdi)|berabere|terk(?:\s+etti)?|kazandı|kaybetti|süre\s+doldu|şah\s+mat\b/i;
   return [...document.querySelectorAll(selectors)].some(element => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     if (!rect.width || !rect.height || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
-    if (element.matches('wc-chess-game-over-modal, [class*="game-over"], [class*="gameOver"]')) return true;
     const text = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
     return text.length > 0 && text.length <= 400 && terminalText.test(text);
   });
