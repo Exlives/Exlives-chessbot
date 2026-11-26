@@ -681,7 +681,7 @@ async function analyzeBoard(board, turn, game) {
   const explanation = explainMove(game, move, search.info);
   result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
   showArrow(move, board.flipped);
-  if (!autoPlay) void showArrowOnSite(move, board);
+  if (board.site === 'World Chess' || !autoPlay) void showArrowOnSite(move, board);
   if (autoPlay && !autoMoveInProgress) {
     const signature = getSignature(board);
     if (autoAppliedSignature !== signature) {
@@ -692,7 +692,8 @@ async function analyzeBoard(board, turn, game) {
         const currentPosition = currentBoard.error ? null : getPositionState(currentBoard, ownColor);
         const currentTurn = currentPosition?.turn;
         const currentTurnVerified = currentBoard.site === 'World Chess'
-          ? currentPosition?.historyIsCurrent && currentTurn === ownColor
+          ? (currentPosition?.historyIsCurrent || currentPosition?.moveHistory.length > 0) &&
+            currentTurn === ownColor
           : currentTurn === ownColor;
         const verifiedWorldChessTurn = currentBoard.site === 'World Chess' &&
           verifiedWorldChessPosition?.signature === signature &&
@@ -721,6 +722,7 @@ async function analyzeBoard(board, turn, game) {
           const playedGame = new Chess(game.fen());
           playedGame.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
           lastConfirmedGame = playedGame;
+          trackedTurn = playedGame.turn();
           verifiedWorldChessPosition = null;
           speculativeWorldChessPosition = null;
           result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle tahtaya uygulandı.</span>');
@@ -798,6 +800,7 @@ async function scanPosition(force = false) {
       verifiedWorldChessPosition = null;
       speculativeWorldChessPosition = null;
       lastAnalyzedWorldChessSignature = null;
+      autoAppliedSignature = null;
       worldChessHistoryPending = false;
       analysisInProgressSignature = null;
       lastSignature = null;
@@ -827,12 +830,21 @@ async function scanPosition(force = false) {
       verifiedWorldChessPosition = null;
       speculativeWorldChessPosition = null;
     } else if (board.site === 'World Chess') {
-      if (verifiedWorldChessPosition?.signature === signature) {
+      if (autoAppliedSignature && changed && lastConfirmedGame &&
+          matchesBoard(lastConfirmedGame, board.pieces)) {
+        positionGame = new Chess(lastConfirmedGame.fen());
+        verifiedWorldChessPosition = { signature, game: positionGame };
+        speculativeWorldChessPosition = null;
+        observedTurn = positionGame.turn();
+      } else if (verifiedWorldChessPosition?.signature === signature) {
         positionGame = new Chess(verifiedWorldChessPosition.game.fen());
         observedTurn = positionGame.turn();
-      } else if (previousTurn && previousTurn !== ownColor &&
-          lastConfirmedGame?.turn() === previousTurn) {
-        const inferredGame = gameAfterSingleLegalMove(lastConfirmedGame, board.pieces);
+      } else if (changed && previousTurn && previousTurn !== ownColor && previousPieces) {
+        const confirmedPreviousGame = lastConfirmedGame?.turn() === previousTurn &&
+          matchesBoard(lastConfirmedGame, previousPieces)
+          ? lastConfirmedGame
+          : new Chess(getFen(previousPieces, previousTurn));
+        const inferredGame = gameAfterSingleLegalMove(confirmedPreviousGame, board.pieces);
         if (inferredGame?.turn() === ownColor) {
           verifiedWorldChessPosition = { signature, game: inferredGame };
           speculativeWorldChessPosition = null;
@@ -895,8 +907,7 @@ async function scanPosition(force = false) {
     const hasVerifiedWorldChessPosition = verifiedWorldChessPosition?.signature === signature;
     const hasSpeculativeWorldChessPosition = speculativeWorldChessPosition?.signature === signature;
     worldChessHistoryPending = worldChessHistoryNeedsSync && !hasVerifiedWorldChessPosition;
-    if (worldChessHistoryPending && !hasSpeculativeWorldChessPosition &&
-        (trackedTurn === ownColor || trackedTurn === null)) {
+    if (worldChessHistoryPending && !hasSpeculativeWorldChessPosition && !observedTurn) {
       analysisGeneration++;
       stopStockfish();
       if (!result.textContent.includes('Hamle geçmişi eşleştiriliyor')) {
