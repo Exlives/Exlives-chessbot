@@ -30,27 +30,28 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped, mode = 
   const target = { tabId };
   await chrome.debugger.attach(target, '1.3');
   try {
-    let activeBoardRect = boardRect;
-    if (host.endsWith('worldchess.com')) {
-      const currentLayout = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: `(() => {
-          const candidates = [...document.querySelectorAll('[data-cg-type="board"].cg-board')]
+    const boardSelector = host.endsWith('worldchess.com')
+      ? '[data-cg-type="board"].cg-board'
+      : host.endsWith('lichess.org') ? 'cg-board' : 'wc-chess-board';
+    const currentLayout = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression: `(() => {
+          const candidates = [...document.querySelectorAll(${JSON.stringify(boardSelector)})]
             .map(board => board.getBoundingClientRect())
             .filter(rect => rect.width > 120 && rect.height > 120 &&
+              Math.abs(rect.width - rect.height) <= Math.max(rect.width, rect.height) * 0.2 &&
               rect.right > 0 && rect.bottom > 0 &&
               rect.left < innerWidth && rect.top < innerHeight)
             .sort((a, b) => b.width * b.height - a.width * a.height);
           const rect = candidates[0];
           return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
         })()`,
-        returnByValue: true
-      });
-      const rect = currentLayout?.result?.value;
-      if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
-        throw new Error('World Chess tahtasının güncel boyutlarını okuyamadım.');
-      }
-      activeBoardRect = rect;
+      returnByValue: true
+    });
+    const rect = currentLayout?.result?.value;
+    if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
+      throw new Error('Satranç tahtasının güncel boyutlarını okuyamadım.');
     }
+    const activeBoardRect = rect;
     const from = squareCenter(move.from, activeBoardRect, flipped);
     const to = squareCenter(move.to, activeBoardRect, flipped);
     if (mode === 'click') {

@@ -570,14 +570,30 @@ async function applyMoveOnSite(move, board) {
   } catch (error) {
     return { error: `Lichess oyun sekmesini doğrulayamadım: ${error.message}` };
   }
-  const sendMoveInput = mode => chrome.runtime.sendMessage({
-    type: 'APPLY_TRUSTED_CHESS_MOVE',
-    tabId: sourceTabId,
-    move,
-    flipped: board.flipped,
-    boardRect: board.boardRect,
-    mode
-  });
+  const sendMoveInput = async mode => {
+    let inputBoard = board;
+    if (board.site !== 'World Chess') {
+      try {
+        inputBoard = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
+      } catch (error) {
+        return { error: `Hamle öncesi tahta ölçülerini yenileyemedim: ${error.message}` };
+      }
+      if (!inputBoard || inputBoard.error) {
+        return { error: inputBoard?.error || 'Hamle öncesi tahta ölçüleri alınamadı.' };
+      }
+      if (getSignature(inputBoard) !== getSignature(board)) {
+        return { error: 'Tahta hamle gönderilmeden önce değişti; yeni konumu analiz ediyorum.' };
+      }
+    }
+    return chrome.runtime.sendMessage({
+      type: 'APPLY_TRUSTED_CHESS_MOVE',
+      tabId: sourceTabId,
+      move,
+      flipped: inputBoard.flipped,
+      boardRect: inputBoard.boardRect,
+      mode
+    });
+  };
   const waitForBoardChange = async timeoutMs => {
     const deadline = Date.now() + timeoutMs;
     let lastReadError = null;
@@ -707,7 +723,7 @@ async function analyzeBoard(board, turn, game) {
           result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Analiz hazır; tahta ve hamle sırası doğrulanana kadar hamle göndermiyorum.</span>');
           return;
         }
-        const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, board);
+        const applied = await applyMoveOnSite({ from: move.from, to: move.to, promotion: move.promotion }, currentBoard);
         if (applied?.error) {
           result.insertAdjacentHTML('beforeend', `<br><span class="explanation">Otomatik oyun: ${errorText(applied.error, 'Hamle uygulanamadı.')}</span>`);
           if (/izleyici modunda/i.test(errorText(applied.error, ''))) {
