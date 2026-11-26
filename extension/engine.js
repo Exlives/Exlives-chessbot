@@ -134,9 +134,7 @@ export class StockfishEngine {
       };
       this.currentSearch = current;
       this.worker.postMessage(`position fen ${fen}`);
-      this.worker.postMessage(timeMs
-        ? `go depth ${depth} movetime ${timeMs}`
-        : `go depth ${depth}`);
+      this.worker.postMessage(timeMs ? `go movetime ${timeMs}` : `go depth ${depth}`);
     });
   }
 
@@ -166,8 +164,8 @@ export class StockfishEngine {
 
 class EngineManager {
   constructor() {
-    // Keep quick analysis light; use the full multithreaded build for longer searches.
-    this.threads = Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2));
+    // Keep quick analysis light; allow more parallel search for balanced and deep analysis.
+    this.threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 2));
     this.engine = null;
     this.usingLite = null;
   }
@@ -186,8 +184,8 @@ class EngineManager {
     }
   }
 
-  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true) {
-    this.selectEngine(timeMs <= 800);
+  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true, useLite = timeMs <= 800) {
+    this.selectEngine(useLite);
     let recoveries = 0;
     while (true) {
       const engine = this.engine;

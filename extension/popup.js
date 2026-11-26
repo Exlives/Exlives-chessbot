@@ -393,6 +393,17 @@ async function readWorldChessBoard(tabId) {
     }
   });
   const board = injected?.result || null;
+  if (board) {
+    try {
+      const clock = await chrome.tabs.sendMessage(tabId, {
+        type: 'READ_CHESS_CLOCK',
+        boardRect: board.boardRect,
+        flipped: board.flipped,
+        turn: board.turn
+      });
+      board.clockSeconds = Number.isFinite(clock?.seconds) ? clock.seconds : null;
+    } catch { /* Clock detection is optional; normal analysis remains available. */ }
+  }
   if (board && boardWatchTabId !== tabId) {
     const watch = await chrome.tabs.sendMessage(tabId, { type: 'START_CHESS_BOARD_WATCH' });
     if (watch?.ok) boardWatchTabId = tabId;
@@ -429,6 +440,7 @@ let lastGameKey = null;
 let worldChessHistoryPending = false;
 let analysisInProgressSignature = null;
 let analysisInProgressToken = 0;
+let analysisInProgressFast = false;
 let scanning = false;
 let forcedScanQueued = false;
 let gameFinished = false;
@@ -445,6 +457,9 @@ let awaitingOpponentMoveSignature = null;
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
 const BOARD_SETTLE_MS = 75;
 const LIVE_POLL_MS = 100;
+const LOW_TIME_THRESHOLD_SECONDS = 20;
+const LOW_TIME_SEARCH_DEPTH = 12;
+const LOW_TIME_SEARCH_MS = 500;
 
 function errorText(error, fallback) {
   if (typeof error === 'string' && error.trim()) return error;
@@ -756,7 +771,18 @@ function describeMove(before, after, mover) {
 async function analyzeBoard(board, turn, game) {
   const generation = ++analysisGeneration;
   const signature = getSignature(board);
-  result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…</span><span>${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} için en iyi hamle aranıyor.</span>`;
+  const depthSelect = document.querySelector('#depth');
+  const selectedDepth = depthSelect.selectedOptions[0];
+  const lowTime = turn === ownColor && Number.isFinite(board.clockSeconds) &&
+    board.clockSeconds <= LOW_TIME_THRESHOLD_SECONDS;
+  const searchDepth = lowTime ? LOW_TIME_SEARCH_DEPTH : Number(depthSelect.value);
+  const searchTimeMs = lowTime ? LOW_TIME_SEARCH_MS : autoPlay && selectedDepth.value === '12'
+    ? 500
+    : Number(selectedDepth.dataset.time);
+  const useLiteEngine = selectedDepth.value === '12';
+  analysisInProgressFast = lowTime || searchTimeMs <= 800;
+  const timingLabel = lowTime ? ' · Süre az, hızlı mod' : '';
+  result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…${timingLabel}</span><span>${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} için en iyi hamle aranıyor.</span>`;
   boardPreview.hidden = true;
   // Paint the status and snapshot the position before starting engine work.
   if (document.visibilityState === 'visible') {
@@ -771,19 +797,13 @@ async function analyzeBoard(board, turn, game) {
     : captureBoard(board).then(() => false).catch(() => true);
   if (generation !== analysisGeneration) return;
   const engine = getStockfish();
-  const depthSelect = document.querySelector('#depth');
-  const selectedDepth = depthSelect.selectedOptions[0];
-  const searchDepth = Number(depthSelect.value);
-  const searchTimeMs = autoPlay && selectedDepth.value === '12'
-    ? 500
-    : Number(selectedDepth.dataset.time);
   let search;
   try {
     search = await engine.search(game.fen(), searchDepth, info => {
       if (generation !== analysisGeneration) return;
       const score = scoreText(info);
-      result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
-    }, searchTimeMs, () => generation === analysisGeneration);
+      result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…${lowTime ? ' · Süre az, hızlı mod' : ` Derinlik ${info.depth}`}</span><span>${score}</span>`;
+    }, searchTimeMs, () => generation === analysisGeneration, useLiteEngine);
   } catch (error) {
     if (generation !== analysisGeneration) return;
     throw error;
@@ -935,6 +955,15 @@ async function scanPosition(force = false) {
       return;
     }
     if (gameFinished && !newGameDetected) return;
+    if (analysisInProgressSignature === signature && !analysisInProgressFast &&
+        trackedTurn === ownColor && (board.turn == null || board.turn === ownColor) &&
+        Number.isFinite(board.clockSeconds) && board.clockSeconds <= LOW_TIME_THRESHOLD_SECONDS) {
+      analysisGeneration++;
+      analysisInProgressFast = true;
+      forcedScanQueued = true;
+      if (board.site === 'World Chess') lastAnalyzedWorldChessSignature = null;
+      stopStockfish();
+    }
     if (!changed && !newGameDetected && !force && trackedTurn !== null &&
         !boardTurnChanged && !worldChessHistoryChanged && !worldChessHistoryPending) return;
     // Wait for animations to settle, then read the board again. This avoids
@@ -954,6 +983,7 @@ async function scanPosition(force = false) {
       board.viewport = stable.board.viewport;
       board.flipped = stable.board.flipped;
       board.turn = stable.board.turn;
+      board.clockSeconds = stable.board.clockSeconds;
       board.moveHistory = stable.board.moveHistory;
       board.gameOver = stable.board.gameOver;
       signature = getSignature(board);
@@ -984,6 +1014,7 @@ async function scanPosition(force = false) {
       awaitingOpponentMoveSignature = null;
       worldChessHistoryPending = false;
       analysisInProgressSignature = null;
+      analysisInProgressFast = false;
       gameFinished = false;
       lastSignature = null;
       ownColor = bottomPlayerColor(board);
@@ -1180,6 +1211,7 @@ async function scanPosition(force = false) {
     } finally {
       if (analysisInProgressToken === analysisToken && analysisInProgressSignature === signature) {
         analysisInProgressSignature = null;
+        analysisInProgressFast = false;
       }
     }
   } catch (error) {
@@ -1218,6 +1250,7 @@ document.querySelector('#new-game').addEventListener('click', () => {
   lastGameKey = null;
   worldChessHistoryPending = false;
   analysisInProgressSignature = null;
+  analysisInProgressFast = false;
   autoAppliedSignature = null;
   awaitingOpponentMoveSignature = null;
   analysisGeneration++;
@@ -1249,6 +1282,7 @@ ownColorSelect.addEventListener('change', async () => {
   lastGameKey = null;
   worldChessHistoryPending = false;
   analysisInProgressSignature = null;
+  analysisInProgressFast = false;
   autoAppliedSignature = null;
   awaitingOpponentMoveSignature = null;
   analysisGeneration++;

@@ -147,6 +147,59 @@ function hasTerminalGameResult() {
   });
 }
 
+function clockSecondsFromElement(element) {
+  const values = [
+    element.innerText,
+    element.textContent,
+    element.getAttribute('aria-label'),
+    element.getAttribute('title')
+  ];
+  for (const value of values) {
+    const text = value?.replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const clocks = [...text.matchAll(/(?:^|[^\d])(\d{1,3}):([0-5]\d)(?:[.,](\d{1,2}))?(?!\d)/g)];
+    if (clocks.length === 1) {
+      const clock = clocks[0];
+      return Number(clock[1]) * 60 + Number(clock[2]) + (clock[3] ? Number(`0.${clock[3]}`) : 0);
+    }
+    if (/^\d{1,2}(?:[.,]\d{1,2})?$/.test(text)) return Number(text.replace(',', '.'));
+  }
+  return null;
+}
+
+function readClockSeconds(boardRect, flipped, turn) {
+  if (!boardRect || (turn !== 'w' && turn !== 'b')) return null;
+  const selector = '.clock-player-turn, .rclock.running, .clock.running, [class*="clock"], [data-testid*="clock"]';
+  const boardCenterY = boardRect.y + boardRect.height / 2;
+  const clocks = [...new Set(document.querySelectorAll(selector))]
+    .map(element => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      if (!rect.width || !rect.height || style.display === 'none' || style.visibility === 'hidden' ||
+          Number(style.opacity) === 0) return null;
+      const descriptor = [
+        element.className,
+        element.getAttribute('data-color'),
+        element.getAttribute('data-player-color'),
+        element.getAttribute('aria-label')
+      ].filter(Boolean).join(' ').toLowerCase();
+      const explicitColor = /\b(?:white|light|w)\b/.test(descriptor) ? 'w'
+        : /\b(?:black|dark|b)\b/.test(descriptor) ? 'b' : null;
+      const color = explicitColor || (rect.top + rect.height / 2 < boardCenterY
+        ? (flipped ? 'w' : 'b')
+        : (flipped ? 'b' : 'w'));
+      return {
+        color,
+        seconds: clockSecondsFromElement(element),
+        active: element.matches('.clock-player-turn, .rclock.running, .clock.running'),
+        distance: Math.abs(rect.top + rect.height / 2 - boardCenterY)
+      };
+    })
+    .filter(clock => clock?.seconds != null && clock.color === turn)
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.distance - b.distance);
+  return clocks[0]?.seconds ?? null;
+}
+
 function getBoardPosition(rectHint = null, includeElement = false) {
   // Lichess uses the custom element <cg-board>; Chess.com uses <wc-chess-board>.
   // Search open shadow roots too, as some page layouts mount the board there.
@@ -211,6 +264,7 @@ function getBoardPosition(rectHint = null, includeElement = false) {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     flipped,
     turn,
+    clockSeconds: clock ? clockSecondsFromElement(clock.el) : null,
     gameOver: hasTerminalGameResult(),
     ...(includeElement ? { boardElement: board } : {})
   };
@@ -278,6 +332,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       watchBoard(board.boardElement);
       sendResponse({ ok: true });
     }
+  }
+  if (message?.type === 'READ_CHESS_CLOCK') {
+    sendResponse({
+      seconds: readClockSeconds(message.boardRect, message.flipped, message.turn)
+    });
   }
   if (message?.type === 'PICK_CHESS_BOARD') {
     startBoardPicker(sendResponse);
