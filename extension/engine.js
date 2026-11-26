@@ -84,7 +84,7 @@ export class StockfishEngine {
 
   async search(fen, depth, onInfo, timeMs) {
     await this.ready;
-    if (this.currentSearch) {
+    while (this.currentSearch) {
       const previous = this.currentSearch;
       this.worker.postMessage('stop');
       await previous.done;
