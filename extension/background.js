@@ -1,4 +1,5 @@
 const appUrl = chrome.runtime.getURL('popup.html');
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function squareCenter(square, boardRect, flipped) {
   if (!/^[a-h][1-8]$/.test(square)) throw new Error('Geçersiz satranç karesi.');
@@ -37,6 +38,7 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped) {
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1
     });
+    await wait(35);
     for (let step = 1; step <= 8; step++) {
       const progress = step / 8;
       await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
@@ -45,7 +47,9 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped) {
         y: from.y + (to.y - from.y) * progress,
         button: 'left', buttons: 1
       });
+      await wait(25);
     }
+    await wait(35);
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1
     });

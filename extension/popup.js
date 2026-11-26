@@ -545,12 +545,23 @@ async function applyMoveOnSite(move, board) {
       boardRect: board.boardRect
     });
     if (applied?.error) return applied;
-    await new Promise(resolve => setTimeout(resolve, 700));
-    const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
-    if (!updated || updated.error || getSignature(updated) === getSignature(board)) {
-      return { error: 'Gerçek fare girdisi gönderildi ancak tahtadaki hamle doğrulanmadı.' };
+    const deadline = Date.now() + 4000;
+    let lastReadError = null;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      try {
+        const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
+        if (updated && !updated.error && getSignature(updated) !== getSignature(board)) {
+          return { ok: true, changed: true };
+        }
+        if (!updated) lastReadError = new Error('İçerik betiği tahtadan yanıt vermedi.');
+        else if (updated.error) lastReadError = new Error(updated.error);
+      } catch (error) {
+        lastReadError = error;
+      }
     }
-    return { ok: true, changed: true };
+    const reason = lastReadError ? ` Tahta okunurken son hata: ${lastReadError.message}` : '';
+    return { error: `Hamle gönderildi ancak 4 saniye içinde tahtada doğrulanmadı.${reason}` };
   } catch (error) {
     return { error: `Hamle uygulanamadı: ${error?.message || String(error)}` };
   }
