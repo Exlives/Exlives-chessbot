@@ -19,8 +19,8 @@ async function setMiniMode(enabled) {
   const display = displays.find(item => item.isPrimary) || displays[0];
   const area = display?.workArea;
   if (!area || win.id == null) return;
-  const width = enabled ? 320 : Math.min(520, Math.max(320, area.width - 24));
-  const height = enabled ? 190 : Math.min(1000, Math.max(560, area.height));
+  const width = enabled ? 420 : Math.min(520, Math.max(320, area.width - 24));
+  const height = enabled ? 300 : Math.min(1000, Math.max(560, area.height));
   await chrome.windows.update(win.id, {
     width, height,
     left: area.left + area.width - width,
@@ -38,7 +38,7 @@ chrome.windows.onBoundsChanged.addListener(async win => {
   const display = displays.find(item => item.isPrimary) || displays[0];
   const area = display?.workArea;
   if (!area) return;
-  const target = { left: area.left + area.width - 320, top: area.top + 8, width: 320, height: 190 };
+  const target = { left: area.left + area.width - 420, top: area.top + 8, width: 420, height: 300 };
   if (Math.abs(win.left - target.left) < 2 && Math.abs(win.top - target.top) < 2 && win.width === target.width && win.height === target.height) return;
   pinningMiniWindow = true;
   try { await chrome.windows.update(win.id, target); }
@@ -278,7 +278,7 @@ let liveTracking = true;
 let pollTimer = null;
 let analysisGeneration = 0;
 let autoDetectColor = true;
-let autoPlay = false;
+let autoPlay = true;
 let autoAppliedSignature = null;
 
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
@@ -774,5 +774,5 @@ function setAutoPlay(enabled) {
 autoPlayToggle.addEventListener('click', () => setAutoPlay(!autoPlay));
 // Preload the default balanced engine while the board is being discovered.
 void getStockfish().warmup(false).catch(() => {});
-// Live tracking starts enabled; turn it off to analyze only on demand.
-setLiveTracking(true);
+// Start with auto-play and live tracking enabled; the user can turn it off.
+setAutoPlay(true);
