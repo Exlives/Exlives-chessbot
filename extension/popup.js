@@ -664,8 +664,8 @@ async function analyzeBoard(board, turn, game) {
   const engine = getStockfish();
   const depthSelect = document.querySelector('#depth');
   const selectedDepth = depthSelect.selectedOptions[0];
-  const searchDepth = autoPlay ? 12 : Number(depthSelect.value);
-  const searchTimeMs = autoPlay ? 500 : Number(selectedDepth.dataset.time);
+  const searchDepth = Number(depthSelect.value);
+  const searchTimeMs = Number(selectedDepth.dataset.time);
   const search = await engine.search(game.fen(), searchDepth, info => {
     if (generation !== analysisGeneration) return;
     const score = scoreText(info);
@@ -1045,7 +1045,8 @@ function setAutoPlay(enabled) {
   }
 }
 autoPlayToggle.addEventListener('click', () => setAutoPlay(!autoPlay));
-// Preload the lightweight engine used for fast automatic moves.
-void getStockfish().warmup(true).catch(() => {});
+// Preload the engine that matches the selected analysis budget.
+const initialSearchTimeMs = Number(document.querySelector('#depth').selectedOptions[0].dataset.time);
+void getStockfish().warmup(initialSearchTimeMs <= 800).catch(() => {});
 // Start with auto-play and live tracking enabled; the user can turn it off.
 setAutoPlay(true);
