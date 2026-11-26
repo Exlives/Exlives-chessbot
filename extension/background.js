@@ -58,15 +58,15 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped, mode = 
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: point.x, y: point.y, button: 'none', buttons: 0
         });
-        await wait(35);
+        await wait(25);
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1
         });
-        await wait(50);
+        await wait(35);
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1
         });
-        await wait(80);
+        await wait(55);
       };
       await clickSquare(from);
       await clickSquare(to);

@@ -382,8 +382,8 @@ let autoAppliedSignature = null;
 let autoMoveInProgress = false;
 
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
-const BOARD_SETTLE_MS = 100;
-const LIVE_POLL_MS = 150;
+const BOARD_SETTLE_MS = 75;
+const LIVE_POLL_MS = 100;
 
 function errorText(error, fallback) {
   if (typeof error === 'string' && error.trim()) return error;
@@ -582,7 +582,7 @@ async function applyMoveOnSite(move, board) {
     const deadline = Date.now() + timeoutMs;
     let lastReadError = null;
     while (Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 100));
       try {
         const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
         if (updated && !updated.error && getSignature(updated) !== getSignature(board)) {
