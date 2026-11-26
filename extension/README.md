@@ -8,7 +8,7 @@ Dosyalar değiştirildikten sonra uzantılar sayfasındaki **Yenile** simgesine 
 
 Pencere açıldığında ve **Yeni oyun** düğmesine bastığınızda **Senin taşlarının rengi** tahtanın altındaki renge göre otomatik seçilir; gerekirse listeden değiştirebilirsiniz. Varsayılan analiz derinliği **Derin** olur. Uzantı yalnızca sizin sıranızda hamle önerir; rakibin sırası geldiğinde öneri vermez. **Ekran izleme** açıkken konum değişikliklerini otomatik takip eder, görüntüyü ve öneriyi yeniler. İzleme kapalıyken yalnızca **Şimdi analiz et** düğmesine bastığınızda tahtayı okur. **Yeni oyun** yardımcıdaki takibi ve hamle belleğini sıfırlar; web sitesindeki oyunu sıfırlamaz. Hamleyi oyun sayfasında kendin uygularsın. Derin analiz daha uzun sürebilir.
 
-**Tahtada oku göster** düğmesi yardımcıyı sağ üstte küçük pencereye alır ve desteklenen oyun tahtasını otomatik algılayıp hamle okunu oyun tahtasında gösterir. Tahta algılanamazsa mevcut otomatik tahta okuma uyarısı görünür. Küçük pencerenin üstündeki ok düğmesiyle büyütebilirsiniz.
+**Tahtada oku göster** düğmesi yardımcıyı sağ üstte küçük pencereye alır ve desteklenen oyun tahtasını otomatik algılayıp hamle okunu oyun tahtasında gösterir. Tahta algılanamazsa mevcut otomatik tahta okuma uyarısı görünür. Küçük penceredeki **Otomatik oyun** düğmesiyle hamlelerin otomatik uygulanmasını açıp kapatabilir, üstteki ok düğmesiyle pencereyi büyütebilirsiniz.
 
 Küçük pencere, başka bir Chrome penceresi öne geçtiğinde yeniden öne alınır. Chrome uzantı API'si işletim sistemi düzeyinde `her zaman üstte` ayarına izin vermediğinden bu davranış Chrome pencereleriyle sınırlıdır.
 
