@@ -367,8 +367,8 @@ let autoAppliedSignature = null;
 let autoMoveInProgress = false;
 
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
-const BOARD_SETTLE_MS = 180;
-const LIVE_POLL_MS = 500;
+const BOARD_SETTLE_MS = 100;
+const LIVE_POLL_MS = 150;
 
 function errorText(error, fallback) {
   if (typeof error === 'string' && error.trim()) return error;
@@ -638,16 +638,20 @@ async function analyzeBoard(board, turn, game) {
   if (game.isGameOver()) throw new Error('Bu konumda yasal hamle yok. Sıradaki rengi kontrol et.');
   // The preview is independent from engine analysis. Start both at once so a
   // screenshot/canvas decode cannot delay the first engine result.
-  const screenshotPromise = captureBoard(board).then(() => false).catch(() => true);
+  const screenshotPromise = autoPlay && miniMode
+    ? Promise.resolve(false)
+    : captureBoard(board).then(() => false).catch(() => true);
   if (generation !== analysisGeneration) return;
   const engine = getStockfish();
   const depthSelect = document.querySelector('#depth');
   const selectedDepth = depthSelect.selectedOptions[0];
-  const search = await engine.search(game.fen(), Number(depthSelect.value), info => {
+  const searchDepth = autoPlay ? 12 : Number(depthSelect.value);
+  const searchTimeMs = autoPlay ? 500 : Number(selectedDepth.dataset.time);
+  const search = await engine.search(game.fen(), searchDepth, info => {
     if (generation !== analysisGeneration) return;
     const score = scoreText(info);
     result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
-  }, Number(selectedDepth.dataset.time));
+  }, searchTimeMs);
   if (generation !== analysisGeneration) return;
   // Keep the root position intact: the engine PV starts with this same move,
   // and explainMove replays that PV from the unmodified position.
@@ -658,7 +662,7 @@ async function analyzeBoard(board, turn, game) {
   const explanation = explainMove(game, move, search.info);
   result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
   showArrow(move, board.flipped);
-  await showArrowOnSite(move, board);
+  void showArrowOnSite(move, board);
   if (autoPlay && !autoMoveInProgress) {
     const signature = getSignature(board);
     if (autoAppliedSignature !== signature) {
@@ -909,7 +913,7 @@ function setAutoPlay(enabled) {
   }
 }
 autoPlayToggle.addEventListener('click', () => setAutoPlay(!autoPlay));
-// Preload the default balanced engine while the board is being discovered.
-void getStockfish().warmup(false).catch(() => {});
+// Preload the lightweight engine used for fast automatic moves.
+void getStockfish().warmup(true).catch(() => {});
 // Start with auto-play and live tracking enabled; the user can turn it off.
 setAutoPlay(true);
