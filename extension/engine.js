@@ -108,13 +108,13 @@ export class StockfishEngine {
 
   async search(fen, depth, onInfo, timeMs) {
     await this.ready;
-    if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
-    if (this.currentSearch) {
+    while (this.currentSearch) {
       const previous = this.currentSearch;
       this.worker.postMessage('stop');
       await previous.done;
       if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
     }
+    if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
     return new Promise((resolve, reject) => {
       let resolveDone;
       const done = new Promise(resolveFinished => { resolveDone = resolveFinished; });
