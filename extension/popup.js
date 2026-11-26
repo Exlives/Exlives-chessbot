@@ -675,6 +675,17 @@ function getGameKey(tab) {
   } catch { return null; }
 }
 
+function hasNewGameStarted(board, gameKey, changed) {
+  const moveCount = (board.moveHistory || []).length;
+  const restartedAfterFinish = gameFinished && changed &&
+    (moveCount <= 2 || moveCount < lastHistoryPly);
+  return lastSignature !== null && (
+    (gameKey && lastGameKey && gameKey !== lastGameKey) ||
+    restartedAfterFinish ||
+    (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || moveCount < lastHistoryPly))
+  );
+}
+
 function describeMove(before, after, mover) {
   if (!before || !after) return null;
   const squares = new Set([...Object.keys(before), ...Object.keys(after)]);
@@ -855,10 +866,7 @@ async function scanPosition(force = false) {
       speculativeWorldChessPosition = null;
       lastAnalyzedWorldChessSignature = null;
     }
-    let newGameDetected = lastSignature !== null && (
-      (gameKey && lastGameKey && gameKey !== lastGameKey) ||
-      (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
-    );
+    let newGameDetected = hasNewGameStarted(board, gameKey, changed);
     if (board.gameOver && !(gameFinished && newGameDetected)) {
       await waitForNextGame(board, signature, gameKey);
       return;
@@ -887,10 +895,7 @@ async function scanPosition(force = false) {
       board.gameOver = stable.board.gameOver;
       signature = getSignature(board);
       changed = signature !== lastSignature;
-      newGameDetected = lastSignature !== null && (
-        (gameKey && lastGameKey && gameKey !== lastGameKey) ||
-        (isStartingPosition(board) && (changed || board.flipped !== lastFlipped || (board.moveHistory || []).length < lastHistoryPly))
-      );
+      newGameDetected = hasNewGameStarted(board, gameKey, changed);
       if (board.gameOver && !(gameFinished && newGameDetected)) {
         await waitForNextGame(board, signature, gameKey);
         return;
