@@ -106,15 +106,18 @@ export class StockfishEngine {
     }
   }
 
-  async search(fen, depth, onInfo, timeMs) {
+  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true) {
     await this.ready;
+    if (!shouldContinue()) return null;
     while (this.currentSearch) {
       const previous = this.currentSearch;
       this.worker.postMessage('stop');
       await previous.done;
+      if (!shouldContinue()) return null;
       if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
     }
     if (this.failed) throw new Error('Stockfish motoru yeniden başlatılmalı.');
+    if (!shouldContinue()) return null;
     return new Promise((resolve, reject) => {
       let resolveDone;
       const done = new Promise(resolveFinished => { resolveDone = resolveFinished; });
@@ -183,16 +186,23 @@ class EngineManager {
     }
   }
 
-  async search(fen, depth, onInfo, timeMs) {
+  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true) {
     this.selectEngine(timeMs <= 800);
-    try {
-      return await this.engine.search(fen, depth, onInfo, timeMs);
-    } catch (error) {
-      if (this.usingLite || !this.engine.failed) throw error;
-      this.engine.terminate();
-      this.engine = new StockfishEngine(LITE_ENGINE_URL, LITE_WASM_URL, 1, 128);
-      this.usingLite = true;
-      return this.engine.search(fen, depth, onInfo, timeMs);
+    let recoveries = 0;
+    while (true) {
+      const engine = this.engine;
+      try {
+        const result = await engine.search(fen, depth, onInfo, timeMs, shouldContinue);
+        if (!shouldContinue()) return null;
+        if (engine !== this.engine) continue;
+        return result;
+      } catch (error) {
+        if (!shouldContinue()) return null;
+        if (engine !== this.engine) continue;
+        if (!engine.failed || recoveries >= 2) throw error;
+        this.selectEngine(true);
+        recoveries++;
+      }
     }
   }
 

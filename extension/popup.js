@@ -397,6 +397,7 @@ let autoDetectColor = true;
 let autoPlay = true;
 let autoAppliedSignature = null;
 let autoMoveInProgress = false;
+let awaitingOpponentMoveSignature = null;
 
 // Keep board recognition responsive without repeatedly reading the page too aggressively.
 const BOARD_SETTLE_MS = 75;
@@ -621,7 +622,7 @@ async function applyMoveOnSite(move, board) {
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 100));
       try {
-        const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
+        const { board: updated } = await readCurrentBoard();
         if (updated && !updated.error && getSignature(updated) !== getSignature(board)) {
           return { changed: true };
         }
@@ -640,8 +641,11 @@ async function applyMoveOnSite(move, board) {
     let verification = await waitForBoardChange(primaryMode === 'click' ? 1800 : 4000);
     if (verification.changed) return { ok: true, changed: true };
 
-    if (primaryMode === 'click' && !verification.lastReadError) {
-      const fallback = await sendMoveInput('drag');
+    const fallbackMode = primaryMode === 'click'
+      ? 'drag'
+      : board.site === 'World Chess' ? 'click' : null;
+    if (fallbackMode && !verification.lastReadError) {
+      const fallback = await sendMoveInput(fallbackMode);
       if (fallback?.error) return fallback;
       verification = await waitForBoardChange(3200);
       if (verification.changed) return { ok: true, changed: true };
@@ -734,7 +738,7 @@ async function analyzeBoard(board, turn, game) {
       if (generation !== analysisGeneration) return;
       const score = scoreText(info);
       result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor… Derinlik ${info.depth}</span><span>${score}</span>`;
-    }, searchTimeMs);
+    }, searchTimeMs, () => generation === analysisGeneration);
   } catch (error) {
     if (generation !== analysisGeneration) return;
     throw error;
@@ -807,6 +811,7 @@ async function analyzeBoard(board, turn, game) {
           playedGame.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
           lastConfirmedGame = playedGame;
           trackedTurn = playedGame.turn();
+          awaitingOpponentMoveSignature = getSignature({ pieces: boardMapFromGame(playedGame) });
           verifiedWorldChessPosition = null;
           speculativeWorldChessPosition = null;
           result.insertAdjacentHTML('beforeend', '<br><span class="explanation">Otomatik oyun: Hamle tahtaya uygulandı.</span>');
@@ -833,6 +838,7 @@ async function waitForNextGame(board, signature, gameKey) {
     boardPreview.hidden = true;
     autoAppliedSignature = null;
   }
+  awaitingOpponentMoveSignature = null;
   if (signature && board.pieces) {
     lastSignature = signature;
     lastPieces = { ...board.pieces };
@@ -852,7 +858,7 @@ async function waitForNextGame(board, signature, gameKey) {
 }
 
 async function scanPosition(force = false) {
-  if (scanning || (autoMoveInProgress && force)) {
+  if (scanning || autoMoveInProgress) {
     if (force) forcedScanQueued = true;
     return;
   }
@@ -930,6 +936,7 @@ async function scanPosition(force = false) {
       speculativeWorldChessPosition = null;
       lastAnalyzedWorldChessSignature = null;
       autoAppliedSignature = null;
+      awaitingOpponentMoveSignature = null;
       worldChessHistoryPending = false;
       analysisInProgressSignature = null;
       gameFinished = false;
@@ -1046,6 +1053,23 @@ async function scanPosition(force = false) {
       await waitForNextGame(board, signature, gameKey);
       return;
     }
+    if (awaitingOpponentMoveSignature) {
+      const opponentReplied = signature !== awaitingOpponentMoveSignature &&
+        trackedTurn === ownColor;
+      if (opponentReplied) {
+        awaitingOpponentMoveSignature = null;
+      } else {
+        const waitingMessage = 'Hamle uygulandı; rakibin yanıtını bekliyorum.';
+        if (result.textContent !== waitingMessage) {
+          analysisGeneration++;
+          stopStockfish();
+          await clearArrowOnSite();
+          document.querySelector('#move-arrow').hidden = true;
+        }
+        result.textContent = waitingMessage;
+        return;
+      }
+    }
     if (autoAppliedSignature === signature) {
       const waitingMessage = 'Hamle uygulandı; rakibin yanıtını bekliyorum.';
       if (result.textContent !== waitingMessage) {
@@ -1150,6 +1174,7 @@ document.querySelector('#new-game').addEventListener('click', () => {
   worldChessHistoryPending = false;
   analysisInProgressSignature = null;
   autoAppliedSignature = null;
+  awaitingOpponentMoveSignature = null;
   analysisGeneration++;
   stopStockfish();
   clearArrowOnSite();
@@ -1180,6 +1205,7 @@ ownColorSelect.addEventListener('change', async () => {
   worldChessHistoryPending = false;
   analysisInProgressSignature = null;
   autoAppliedSignature = null;
+  awaitingOpponentMoveSignature = null;
   analysisGeneration++;
   stopStockfish();
   await clearArrowOnSite();
