@@ -536,23 +536,23 @@ async function applyMoveOnSite(move, board) {
   } catch (error) {
     return { error: `Lichess oyun sekmesini doğrulayamadım: ${error.message}` };
   }
-  try {
-    const applied = await chrome.runtime.sendMessage({
-      type: 'APPLY_TRUSTED_CHESS_MOVE',
-      tabId: sourceTabId,
-      move,
-      flipped: board.flipped,
-      boardRect: board.boardRect
-    });
-    if (applied?.error) return applied;
-    const deadline = Date.now() + 4000;
+  const sendMoveInput = mode => chrome.runtime.sendMessage({
+    type: 'APPLY_TRUSTED_CHESS_MOVE',
+    tabId: sourceTabId,
+    move,
+    flipped: board.flipped,
+    boardRect: board.boardRect,
+    mode
+  });
+  const waitForBoardChange = async timeoutMs => {
+    const deadline = Date.now() + timeoutMs;
     let lastReadError = null;
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 200));
       try {
         const updated = await chrome.tabs.sendMessage(sourceTabId, { type: 'READ_CHESS_BOARD' });
         if (updated && !updated.error && getSignature(updated) !== getSignature(board)) {
-          return { ok: true, changed: true };
+          return { changed: true };
         }
         if (!updated) lastReadError = new Error('İçerik betiği tahtadan yanıt vermedi.');
         else if (updated.error) lastReadError = new Error(updated.error);
@@ -560,8 +560,24 @@ async function applyMoveOnSite(move, board) {
         lastReadError = error;
       }
     }
-    const reason = lastReadError ? ` Tahta okunurken son hata: ${lastReadError.message}` : '';
-    return { error: `Hamle gönderildi ancak 4 saniye içinde tahtada doğrulanmadı.${reason}` };
+    return { changed: false, lastReadError };
+  };
+  try {
+    const primaryMode = board.site === 'Lichess' ? 'click' : 'drag';
+    const applied = await sendMoveInput(primaryMode);
+    if (applied?.error) return applied;
+    let verification = await waitForBoardChange(primaryMode === 'click' ? 1800 : 4000);
+    if (verification.changed) return { ok: true, changed: true };
+
+    if (primaryMode === 'click' && !verification.lastReadError) {
+      const fallback = await sendMoveInput('drag');
+      if (fallback?.error) return fallback;
+      verification = await waitForBoardChange(3200);
+      if (verification.changed) return { ok: true, changed: true };
+    }
+
+    const reason = verification.lastReadError ? ` Tahta okunurken son hata: ${verification.lastReadError.message}` : '';
+    return { error: `Hamle gönderildi ancak tahtada doğrulanmadı.${reason}` };
   } catch (error) {
     return { error: `Hamle uygulanamadı: ${error?.message || String(error)}` };
   }

@@ -15,7 +15,7 @@ function squareCenter(square, boardRect, flipped) {
   };
 }
 
-async function dispatchTrustedChessMove(tabId, move, boardRect, flipped) {
+async function dispatchTrustedChessMove(tabId, move, boardRect, flipped, mode = 'drag') {
   if (!Number.isInteger(tabId) || !move?.from || !move?.to ||
       !boardRect || ![boardRect.x, boardRect.y, boardRect.width, boardRect.height].every(Number.isFinite) ||
       boardRect.width < 120 || boardRect.height < 120 ||
@@ -32,6 +32,27 @@ async function dispatchTrustedChessMove(tabId, move, boardRect, flipped) {
   const target = { tabId };
   await chrome.debugger.attach(target, '1.3');
   try {
+    if (mode === 'click') {
+      const clickSquare = async point => {
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: point.x, y: point.y, button: 'none', buttons: 0
+        });
+        await wait(35);
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1
+        });
+        await wait(50);
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1
+        });
+        await wait(80);
+      };
+      await clickSquare(from);
+      await clickSquare(to);
+      return { ok: true };
+    }
+
+    if (mode !== 'drag') throw new Error('Bilinmeyen hamle giriş yöntemi.');
     await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
       type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0
     });
@@ -65,7 +86,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ error: 'Hamle isteğinin kaynağı doğrulanamadı.' });
     return;
   }
-  dispatchTrustedChessMove(message.tabId, message.move, message.boardRect, message.flipped)
+  dispatchTrustedChessMove(message.tabId, message.move, message.boardRect, message.flipped, message.mode)
     .then(sendResponse)
     .catch(error => sendResponse({ error: error?.message || String(error) }));
   return true;
