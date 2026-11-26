@@ -2,6 +2,8 @@
 
 Chrome veya Edge'de `chrome://extensions` / `edge://extensions` sayfasını açın, Geliştirici modunu etkinleştirin, **Paketlenmemiş öğe yükle** düğmesine basın ve bu `extension` klasörünü seçin. Ardından Chess.com, Lichess ya da World Chess oyun sekmesini açıp uzantı simgesine tıklayın. Uygulama ekranın sağ üst köşesinde ayrı bir pencerede açılır, başka bir yere tıklayınca kapanmaz; sağ üstteki **×** düğmesiyle kapatılır.
 
+Rekor Oyun'daki Okey sayfasında uzantı simgesine basınca Okey yardımcısı açılır. **Istakayı oku ve analiz et** düğmesi yalnızca altta görünen taşları tarar ve atma önerisi verir; taşı oyunda kendiniz atarsınız. İlk sürüm 101 Okey için temel seri/set bağlantılarını kullanır, 101 açma puanını ve masaya işleme hesabını henüz değerlendirmez.
+
 Dosyalar değiştirildikten sonra uzantılar sayfasındaki **Yenile** simgesine basın ve açık satranç sekmesini de yenileyin. Analiz düğmesi içerik betiğine bağlanamazsa betiği bir kez yüklemeyi dener.
 
 Pencere açıldığında ve **Yeni oyun** düğmesine bastığınızda **Senin taşlarının rengi** tahtanın altındaki renge göre otomatik seçilir; gerekirse listeden değiştirebilirsiniz. Varsayılan analiz derinliği **Derin** olur. Uzantı yalnızca sizin sıranızda hamle önerir; rakibin sırası geldiğinde öneri vermez. **Ekran izleme** açıkken konum değişikliklerini otomatik takip eder, görüntüyü ve öneriyi yeniler. İzleme kapalıyken yalnızca **Şimdi analiz et** düğmesine bastığınızda tahtayı okur. **Yeni oyun** yardımcıdaki takibi ve hamle belleğini sıfırlar; web sitesindeki oyunu sıfırlamaz. Hamleyi oyun sayfasında kendin uygularsın. Derin analiz daha uzun sürebilir.

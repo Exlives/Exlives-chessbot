@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Exlives Okey yardımcısı</title>
+  <link rel="stylesheet" href="okey.css">
+</head>
+<body>
+  <main class="app">
+    <header><img src="logo.svg" alt=""><div><strong>Exlives Okey</strong><small>101 OKEY YARDIMCISI</small></div><button id="close" title="Kapat">×</button></header>
+    <h1>Istakan için öneri</h1>
+    <p class="intro">Görünen taşlarını okuyup atman için bir taş önerir.</p>
+    <button id="scan" class="primary">Istakayı oku ve analiz et <span>→</span></button>
+    <section id="status" class="status">Okey oyununu açıp bu düğmeye bas.</section>
+    <section id="hand-panel" class="panel" hidden>
+      <div class="panel-title"><span>Okunan taşlar</span><span id="count"></span></div>
+      <div id="hand" class="hand"></div>
+    </section>
+    <section id="recommendation" class="recommendation" hidden>
+      <small>ATMAN ÖNERİLEN TAŞ</small>
+      <strong id="discard"></strong>
+      <span id="reason"></span>
+    </section>
+    <p class="footnote">Bu ilk sürüm yalnızca alttaki görünen ıstakayı okur. Taşı sen seçip atarsın; rakiplerin kapalı taşlarına bakmaz.</p>
+  </main>
+  <script type="module" src="okey.js"></script>
+</body>
+</html>

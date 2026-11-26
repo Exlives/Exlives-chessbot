@@ -15,18 +15,33 @@ async function getWindowLayout() {
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
+  const okeyTab = /rekoroyun\.com\/(?:okey\.html|embed\/okey\/)/i.test(tab?.url || '');
+  const appUrl = chrome.runtime.getURL(okeyTab ? 'okey.html' : 'popup.html');
+  let readerError = '';
+  if (okeyTab && Number.isInteger(tab?.id)) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['okey-content.js'] });
+    } catch (error) {
+      readerError = error?.message || String(error);
+    }
+  }
   const windows = await chrome.windows.getAll({ populate: true });
   const existing = windows.find((win) => win.type === 'popup' &&
-    win.tabs?.some((item) => item.url?.startsWith(appUrl)));
+    win.tabs?.some((item) => /(?:popup|okey)\.html(?:\?|$)/.test(item.url || '')));
+  const params = new URLSearchParams();
+  if (Number.isInteger(tab?.id)) params.set('tabId', tab.id);
+  if (Number.isInteger(tab?.windowId)) params.set('windowId', tab.windowId);
+  if (readerError) params.set('readerError', readerError);
+  const query = params.toString();
+  const target = query ? `?${query}` : '';
   if (existing) {
     if (tab?.id != null) {
-      const appTab = existing.tabs.find((item) => item.url?.startsWith(appUrl));
-      if (appTab?.id != null) await chrome.tabs.update(appTab.id, { url: `${appUrl}?tabId=${tab.id}&windowId=${tab.windowId}` });
+      const appTab = existing.tabs.find((item) => /(?:popup|okey)\.html/.test(item.url || ''));
+      if (appTab?.id != null) await chrome.tabs.update(appTab.id, { url: `${appUrl}${target}` });
     }
     await chrome.windows.update(existing.id, { focused: true, ...await getWindowLayout() });
     return;
   }
-  const target = Number.isInteger(tab?.id) ? `?tabId=${tab.id}&windowId=${tab.windowId}` : '';
   await chrome.windows.create({
     url: `${appUrl}${target}`,
     type: 'popup',
