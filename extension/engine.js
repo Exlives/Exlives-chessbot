@@ -106,7 +106,7 @@ export class StockfishEngine {
     }
   }
 
-  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true) {
+  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true, searchMoves = null) {
     await this.ready;
     if (!shouldContinue()) return null;
     while (this.currentSearch) {
@@ -134,7 +134,10 @@ export class StockfishEngine {
       };
       this.currentSearch = current;
       this.worker.postMessage(`position fen ${fen}`);
-      this.worker.postMessage(timeMs ? `go movetime ${timeMs}` : `go depth ${depth}`);
+      const searchMoveOption = searchMoves?.length ? `searchmoves ${searchMoves.join(' ')} ` : '';
+      this.worker.postMessage(timeMs
+        ? `go ${searchMoveOption}movetime ${timeMs}`
+        : `go ${searchMoveOption}depth ${depth}`);
     });
   }
 
@@ -184,13 +187,13 @@ class EngineManager {
     }
   }
 
-  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true, useLite = timeMs <= 800) {
+  async search(fen, depth, onInfo, timeMs, shouldContinue = () => true, useLite = timeMs <= 800, searchMoves = null) {
     this.selectEngine(useLite);
     let recoveries = 0;
     while (true) {
       const engine = this.engine;
       try {
-        const result = await engine.search(fen, depth, onInfo, timeMs, shouldContinue);
+        const result = await engine.search(fen, depth, onInfo, timeMs, shouldContinue, searchMoves);
         if (!shouldContinue()) return null;
         if (engine !== this.engine) continue;
         return result;

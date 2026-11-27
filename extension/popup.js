@@ -175,7 +175,10 @@ document.querySelector('#close-app').addEventListener('click', async () => {
   if (win.id != null) chrome.windows.remove(win.id);
 });
 document.querySelector('#mini-toggle').addEventListener('click', () => setMiniMode(!miniMode));
-document.querySelector('#micro-toggle').addEventListener('click', () => setMicroMode(!microMode));
+document.querySelector('#micro-toggle').addEventListener('click', async () => {
+  if (!miniMode) await setMiniMode(true);
+  await setMicroMode(!microMode);
+});
 function getFen(piecesBySquare, turn) {
   let rows=[];for(let rank=8;rank>=1;rank--){let row='',empty=0;for(const file of 'abcdefgh'){const p=piecesBySquare[file+rank];if(!p)empty++;else{if(empty)row+=empty;empty=0;row+=p[0]==='w'?p[1].toUpperCase():p[1]}}if(empty)row+=empty;rows.push(row)}
   // Rights are inferred only when king and original rooks remain on their home squares.
@@ -241,6 +244,27 @@ function moveFromUci(game, uci) {
   const match = uci?.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/);
   if (!match) return null;
   return game.move({ from: match[1], to: match[2], ...(match[3] ? { promotion: match[3] } : {}) });
+}
+function nonRepeatingSearchMoves(game, historyIsCurrent) {
+  const hasNonPawnMaterial = game.board().flat().some(piece => piece && !['k', 'p'].includes(piece.type));
+  if (!historyIsCurrent || !hasNonPawnMaterial) return null;
+
+  const moves = game.moves({ verbose: true });
+  const repeatingMoves = new Set();
+  for (const move of moves) {
+    const uci = `${move.from}${move.to}${move.promotion || ''}`;
+    game.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
+    try {
+      if (game.isThreefoldRepetition()) repeatingMoves.add(uci);
+    } finally {
+      game.undo();
+    }
+  }
+  if (!repeatingMoves.size) return null;
+  const allowedMoves = moves
+    .map(move => `${move.from}${move.to}${move.promotion || ''}`)
+    .filter(uci => !repeatingMoves.has(uci));
+  return allowedMoves.length ? allowedMoves : null;
 }
 function scoreText(info) {
   if (!info) return '';
@@ -459,7 +483,7 @@ const BOARD_SETTLE_MS = 75;
 const LIVE_POLL_MS = 100;
 const LOW_TIME_THRESHOLD_SECONDS = 20;
 const LOW_TIME_SEARCH_DEPTH = 12;
-const LOW_TIME_SEARCH_MS = 500;
+const LOW_TIME_SEARCH_MS = 50;
 
 function errorText(error, fallback) {
   if (typeof error === 'string' && error.trim()) return error;
@@ -768,7 +792,7 @@ function describeMove(before, after, mover) {
   return `${names[piece] || 'Taş'} ${from} → ${to}${promotion}`;
 }
 
-async function analyzeBoard(board, turn, game) {
+async function analyzeBoard(board, turn, game, historyIsCurrent) {
   const generation = ++analysisGeneration;
   const signature = getSignature(board);
   const depthSelect = document.querySelector('#depth');
@@ -776,12 +800,12 @@ async function analyzeBoard(board, turn, game) {
   const lowTime = turn === ownColor && Number.isFinite(board.clockSeconds) &&
     board.clockSeconds <= LOW_TIME_THRESHOLD_SECONDS;
   const searchDepth = lowTime ? LOW_TIME_SEARCH_DEPTH : Number(depthSelect.value);
-  const searchTimeMs = lowTime ? LOW_TIME_SEARCH_MS : autoPlay && selectedDepth.value === '12'
-    ? 500
-    : Number(selectedDepth.dataset.time);
+  const searchTimeMs = lowTime ? LOW_TIME_SEARCH_MS : Number(selectedDepth.dataset.time);
   const useLiteEngine = selectedDepth.value === '12';
+  const searchMoves = nonRepeatingSearchMoves(game, historyIsCurrent);
+  const avoidingRepetition = searchMoves !== null;
   analysisInProgressFast = lowTime || searchTimeMs <= 800;
-  const timingLabel = lowTime ? ' · Süre az, hızlı mod' : '';
+  const timingLabel = `${lowTime ? ' · Süre az, hızlı mod' : ''}${avoidingRepetition ? ' · Tekrar beraberliği önleniyor' : ''}`;
   result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…${timingLabel}</span><span>${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} için en iyi hamle aranıyor.</span>`;
   boardPreview.hidden = true;
   // Paint the status and snapshot the position before starting engine work.
@@ -802,8 +826,9 @@ async function analyzeBoard(board, turn, game) {
     search = await engine.search(game.fen(), searchDepth, info => {
       if (generation !== analysisGeneration) return;
       const score = scoreText(info);
-      result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…${lowTime ? ' · Süre az, hızlı mod' : ` Derinlik ${info.depth}`}</span><span>${score}</span>`;
-    }, searchTimeMs, () => generation === analysisGeneration, useLiteEngine);
+      const progressLabel = `${lowTime ? ' · Süre az, hızlı mod' : ` Derinlik ${info.depth}`}${avoidingRepetition ? ' · Tekrar beraberliği önleniyor' : ''}`;
+      result.innerHTML = `<span class="thinking-line"><span class="spinner"></span>Analiz ediliyor…${progressLabel}</span><span>${score}</span>`;
+    }, searchTimeMs, () => generation === analysisGeneration, useLiteEngine, searchMoves);
   } catch (error) {
     if (generation !== analysisGeneration) return;
     throw error;
@@ -830,7 +855,10 @@ async function analyzeBoard(board, turn, game) {
   const moveText = `${move.from} → ${move.to}${move.promotion ? `=${move.promotion.toUpperCase()}` : ''}`;
   const opponentLine = lastOpponentMove ? `<span class="opponent-move">Rakibin hamlesi: ${lastOpponentMove}</span>` : '';
   const explanation = explainMove(game, move, search.info);
-  result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>`;
+  const repetitionNote = avoidingRepetition
+    ? '<span class="explanation">Üç tekrar beraberliğine götüren hamlelerden kaçınıldı.</span>'
+    : '';
+  result.innerHTML = `<span>Canlı takip · ${board.site} · ${turn === 'w' ? 'Beyaz' : 'Siyah'} oynar</span>${opponentLine}<strong class="san">${move.san}</strong><span>Taşını ${moveText} oynat.</span><span class="explanation">${explanation}</span>${repetitionNote}`;
   showArrow(move, board.flipped);
   if (board.site === 'World Chess' || !autoPlay) void showArrowOnSite(move, board);
   if (autoPlay && !autoMoveInProgress) {
@@ -1207,7 +1235,7 @@ async function scanPosition(force = false) {
     analysisInProgressSignature = signature;
     if (board.site === 'World Chess') lastAnalyzedWorldChessSignature = signature;
     try {
-      await analyzeBoard(board, trackedTurn, positionGame);
+      await analyzeBoard(board, trackedTurn, positionGame, historyIsCurrent);
     } finally {
       if (analysisInProgressToken === analysisToken && analysisInProgressSignature === signature) {
         analysisInProgressSignature = null;
