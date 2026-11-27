@@ -58,3 +58,6 @@ body.micro-mode #micro-toggle{display:block;flex:1;height:32px}
 body.micro-mode #mini-toggle{display:none}
 body.micro-mode #close-app{width:32px;height:32px;margin:0}
 body.micro-mode .intro,body.micro-mode .settings-row,body.micro-mode .live-toggle,body.micro-mode .auto-play-toggle,body.micro-mode .actions-row,body.micro-mode .result,body.micro-mode .show-on-board,body.micro-mode .board-preview,body.micro-mode .note{display:none}
+body.mini-mode .settings-row{display:block;margin-top:8px}body.mini-mode .settings-row>div:first-child{display:none}body.mini-mode .settings-row>div:last-child{display:block}body.mini-mode .settings-row label{display:block;margin:0 0 5px;font-size:11px}body.mini-mode .settings-row select{height:34px}
+body.micro-mode .settings-row{display:none}
+body.micro-mode main{height:auto;min-height:0}body.micro-mode .settings-row{display:block;margin-top:8px}body.micro-mode .settings-row>div:first-child{display:none}body.micro-mode .settings-row>div:last-child{display:block}body.micro-mode .settings-row label{display:none}body.micro-mode .settings-row select{height:32px}

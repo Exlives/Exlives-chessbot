@@ -10,85 +10,129 @@ let boardWatchTabId = null;
 let miniMode = false;
 let microMode = false;
 let miniWindowId = null;
-let pinningMiniWindow = false;
-let fittingMiniWindow = false;
-let miniFitScheduled = false;
+let windowModeInitialized = false;
+let boundsSaveTimer = null;
+let pendingWindowBounds = null;
+let pendingWindowMode = null;
 
 const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
 
-function scheduleMiniFit() {
-  if (!miniMode || microMode || miniFitScheduled) return;
-  miniFitScheduled = true;
-  void nextFrame().then(() => {
-    miniFitScheduled = false;
-    return fitMiniWindow();
+function currentWindowMode() {
+  return microMode ? 'micro' : miniMode ? 'mini' : 'full';
+}
+
+function isValidWindowBounds(bounds) {
+  return bounds && [bounds.left, bounds.top, bounds.width, bounds.height].every(Number.isFinite);
+}
+
+function getStoredWindowBounds(settings, mode) {
+  const saved = settings.chessbotWindowBounds;
+  if (isValidWindowBounds(saved)) {
+    return (settings.chessbotWindowMode || 'full') === mode ? saved : null;
+  }
+  return isValidWindowBounds(saved?.[mode]) ? saved[mode] : null;
+}
+
+async function saveWindowBounds(mode, bounds) {
+  if (!isValidWindowBounds(bounds)) return;
+  const settings = await chrome.storage.local.get(['chessbotWindowBounds', 'chessbotWindowMode']);
+  let saved = settings.chessbotWindowBounds;
+  if (isValidWindowBounds(saved)) {
+    saved = { [settings.chessbotWindowMode || 'full']: saved };
+  } else if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+    saved = {};
+  }
+  await chrome.storage.local.set({
+    chessbotWindowBounds: { ...saved, [mode]: bounds }
   });
 }
 
-async function fitMiniWindow() {
-  if (!miniMode || microMode || fittingMiniWindow) return;
-  fittingMiniWindow = true;
-  try {
-    const win = await chrome.windows.getCurrent();
-    const displays = await chrome.system.display.getInfo();
-    const display = displays.find(item => item.isPrimary) || displays[0];
-    const area = display?.workArea;
-    if (!area || win.id == null) return;
-
-    const width = Math.max(280, Math.min(560, area.width - 16));
-    const frameWidth = Math.max(0, window.outerWidth - window.innerWidth);
-    document.body.style.width = `${Math.max(280, width - frameWidth)}px`;
-    const result = document.querySelector('#result');
-    result.style.maxHeight = '';
-    result.style.overflowY = '';
-    await nextFrame();
-
-    const frameHeight = Math.max(0, window.outerHeight - window.innerHeight);
-    const maxHeight = Math.max(200, area.height - 16);
-    const main = document.querySelector('main');
-    const contentHeight = Math.max(main.scrollHeight, document.documentElement.scrollHeight);
-    let height = Math.min(maxHeight, Math.ceil(contentHeight + frameHeight));
-
-    if (contentHeight + frameHeight > maxHeight) {
-      const fixedContentHeight = Math.max(0, contentHeight - result.scrollHeight);
-      result.style.maxHeight = `${Math.max(90, maxHeight - frameHeight - fixedContentHeight)}px`;
-      result.style.overflowY = 'auto';
-      await nextFrame();
-      height = maxHeight;
-    }
-
-    const left = area.left + area.width - width;
-    const top = area.top + area.height - height - 8;
-    if (win.width !== width || win.height !== height || win.left !== left || win.top !== top) {
-      await chrome.windows.update(win.id, { width, height, left, top });
-    }
-  } finally {
-    fittingMiniWindow = false;
+async function persistWindowBounds() {
+  if (boundsSaveTimer !== null) {
+    clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = null;
   }
+  if (!pendingWindowBounds || !pendingWindowMode) return;
+  const bounds = pendingWindowBounds;
+  const mode = pendingWindowMode;
+  pendingWindowBounds = null;
+  pendingWindowMode = null;
+  await saveWindowBounds(mode, bounds);
 }
 
-async function setMiniMode(enabled) {
+function scheduleWindowBoundsSave(win) {
+  if (!isValidWindowBounds(win)) return;
+  pendingWindowBounds = {
+    left: win.left,
+    top: win.top,
+    width: win.width,
+    height: win.height
+  };
+  pendingWindowMode = currentWindowMode();
+  if (boundsSaveTimer !== null) clearTimeout(boundsSaveTimer);
+  boundsSaveTimer = setTimeout(() => {
+    boundsSaveTimer = null;
+    void persistWindowBounds().catch(error => console.error('Pencere konumu kaydedilemedi.', error));
+  }, 250);
+}
+
+function displayForBounds(displays, bounds) {
+  const centerX = bounds.left + bounds.width / 2;
+  const centerY = bounds.top + bounds.height / 2;
+  return displays.find(({ workArea }) =>
+    centerX >= workArea.left && centerX < workArea.left + workArea.width &&
+    centerY >= workArea.top && centerY < workArea.top + workArea.height) ||
+    displays.find(item => item.isPrimary) || displays[0];
+}
+
+function clampWindowBounds(bounds, display) {
+  const area = display?.workArea;
+  if (!area) return bounds;
+  const width = Math.min(Math.max(180, bounds.width), area.width);
+  const height = Math.min(Math.max(88, bounds.height), area.height);
+  return {
+    left: Math.min(Math.max(bounds.left, area.left), area.left + area.width - width),
+    top: Math.min(Math.max(bounds.top, area.top), area.top + area.height - height),
+    width,
+    height
+  };
+}
+
+async function setMiniMode(enabled, restoring = false) {
+  const previousMode = currentWindowMode();
+  const targetMode = enabled ? 'mini' : 'full';
+  const win = await chrome.windows.getCurrent();
+  miniWindowId = win.id;
+  const displays = await chrome.system.display.getInfo();
+  if (win.id == null) return;
+  const currentBounds = { left: win.left, top: win.top, width: win.width, height: win.height };
+  if (!restoring) {
+    await persistWindowBounds();
+    await saveWindowBounds(previousMode, currentBounds);
+  }
+  const settings = await chrome.storage.local.get(['chessbotWindowBounds', 'chessbotWindowMode']);
+  const savedBounds = getStoredWindowBounds(settings, targetMode);
+  const display = displayForBounds(displays, savedBounds || currentBounds);
+  const area = display?.workArea;
+  if (!area) return;
+  const defaults = enabled
+    ? { width: Math.max(180, Math.min(320, area.width - 16)), height: 190 }
+    : {
+        width: Math.min(520, Math.max(320, area.width - 24)),
+        height: Math.min(1000, Math.max(560, area.height))
+      };
+  const bounds = clampWindowBounds(savedBounds || { ...currentBounds, ...defaults }, display);
+
   miniMode = enabled;
   microMode = false;
   document.body.classList.remove('micro-mode');
   document.body.classList.toggle('mini-mode', enabled);
-  const win = await chrome.windows.getCurrent();
-  miniWindowId = win.id;
-  const displays = await chrome.system.display.getInfo();
-  const display = displays.find(item => item.isPrimary) || displays[0];
-  const area = display?.workArea;
-  if (!area || win.id == null) return;
-  const width = enabled
-    ? Math.max(280, Math.min(560, area.width - 16))
-    : Math.min(520, Math.max(320, area.width - 24));
-  const height = enabled ? 300 : Math.min(1000, Math.max(560, area.height));
   if (!enabled) document.body.style.width = '';
   await chrome.windows.update(win.id, {
-    width, height,
-    left: area.left + area.width - width,
-    top: area.top + area.height - height - 8,
+    ...bounds,
     focused: true
   });
+  if (!restoring) await chrome.storage.local.set({ chessbotWindowMode: targetMode });
   const toggle = document.querySelector('#mini-toggle');
   toggle.title = enabled ? 'Pencereyi büyüt' : 'Küçük pencereye geç';
   toggle.setAttribute('aria-label', toggle.title);
@@ -96,64 +140,59 @@ async function setMiniMode(enabled) {
   microToggle.textContent = 'Mini mod';
   microToggle.title = 'Mini mod';
   microToggle.setAttribute('aria-label', microToggle.title);
-  if (enabled) scheduleMiniFit();
 }
 
-async function setMicroMode(enabled) {
+async function setMicroMode(enabled, restoring = false) {
   if (!miniMode || microMode === enabled) return;
+  const previousMode = currentWindowMode();
+  const targetMode = enabled ? 'micro' : 'mini';
+  const win = await chrome.windows.getCurrent();
+  miniWindowId = win.id;
+  const displays = await chrome.system.display.getInfo();
+  if (win.id == null) return;
+  const currentBounds = { left: win.left, top: win.top, width: win.width, height: win.height };
+  if (!restoring) {
+    await persistWindowBounds();
+    await saveWindowBounds(previousMode, currentBounds);
+  }
+  const settings = await chrome.storage.local.get(['chessbotWindowBounds', 'chessbotWindowMode']);
+  const savedBounds = getStoredWindowBounds(settings, targetMode);
+  const display = displayForBounds(displays, savedBounds || currentBounds);
+  const area = display?.workArea;
+  if (!area) return;
+  const usableSavedBounds = enabled && savedBounds && savedBounds.height < 126 ? null : savedBounds;
+  const defaults = enabled
+    ? { width: 230, height: 126 }
+    : { width: Math.max(180, Math.min(320, area.width - 16)), height: 190 };
+  const bounds = clampWindowBounds(usableSavedBounds || { ...currentBounds, ...defaults }, display);
+
   microMode = enabled;
   document.body.classList.toggle('micro-mode', enabled);
   document.body.style.width = enabled ? '100%' : '';
-
   const toggle = document.querySelector('#micro-toggle');
   toggle.textContent = enabled ? 'Mini moda dön' : 'Mini mod';
   toggle.title = toggle.textContent;
   toggle.setAttribute('aria-label', toggle.title);
 
-  const win = await chrome.windows.getCurrent();
-  const displays = await chrome.system.display.getInfo();
-  const display = displays.find(item => item.isPrimary) || displays[0];
-  const area = display?.workArea;
-  if (!area || win.id == null) return;
-
-  const width = enabled ? 230 : Math.max(280, Math.min(560, area.width - 16));
-  const height = enabled ? 88 : 300;
   await chrome.windows.update(win.id, {
-    width,
-    height,
-    left: area.left + area.width - width,
-    top: area.top + area.height - height - 8,
+    ...bounds,
     focused: true
   });
-  if (!enabled) scheduleMiniFit();
+  if (!restoring) await chrome.storage.local.set({ chessbotWindowMode: targetMode });
 }
 
-chrome.windows.onBoundsChanged.addListener(async win => {
-  if (!miniMode || pinningMiniWindow || win.id !== miniWindowId || win.state === 'minimized') return;
-  const displays = await chrome.system.display.getInfo();
-  const display = displays.find(item => item.isPrimary) || displays[0];
-  const area = display?.workArea;
-  if (!area) return;
-  const target = {
-    left: area.left + area.width - win.width,
-    top: area.top + area.height - win.height - 8
-  };
-  if (Math.abs(win.left - target.left) < 2 && Math.abs(win.top - target.top) < 2) {
-    scheduleMiniFit();
-    return;
-  }
-  pinningMiniWindow = true;
-  try { await chrome.windows.update(win.id, target); }
-  finally { pinningMiniWindow = false; }
-  scheduleMiniFit();
+chrome.windows.onBoundsChanged.addListener(win => {
+  if (!windowModeInitialized || win.id !== miniWindowId || win.state === 'minimized') return;
+  scheduleWindowBoundsSave(win);
 });
 
-new MutationObserver(scheduleMiniFit).observe(result, {
-  childList: true,
-  characterData: true,
-  subtree: true
+void chrome.windows.getCurrent().then(win => {
+  miniWindowId = win.id;
+}).catch(error => console.error('Pencere kimliği okunamadı.', error));
+
+window.addEventListener('beforeunload', () => {
+  void persistWindowBounds().catch(error => console.error('Pencere konumu kaydedilemedi.', error));
 });
-window.addEventListener('resize', scheduleMiniFit);
 
 // Chrome extensions cannot set the OS-level always-on-top flag for a window.
 // Keep the compact helper above other Chrome windows by raising it whenever
@@ -171,6 +210,7 @@ chrome.windows.onFocusChanged.addListener(async focusedWindowId => {
 
 document.querySelector('#close-app').addEventListener('click', async () => {
   await clearArrowOnSite();
+  await persistWindowBounds();
   const win = await chrome.windows.getCurrent();
   if (win.id != null) chrome.windows.remove(win.id);
 });
@@ -1383,4 +1423,15 @@ depthSelect.addEventListener('change', async () => {
 const initialSearchTimeMs = Number(depthSelect.selectedOptions[0].dataset.time);
 void getStockfish().warmup(initialSearchTimeMs <= 800).catch(() => {});
 // Start with auto-play and live tracking enabled; the user can turn it off.
-setAutoPlay(true);
+(async () => {
+  try {
+    // Always start in the normal view. Compact modes are opt-in for the
+    // current session and should not change the next launch screen.
+    await chrome.storage.local.set({ chessbotWindowMode: 'full' });
+  } catch (error) {
+    console.error('Başlangıç pencere modu ayarlanamadı.', error);
+  } finally {
+    windowModeInitialized = true;
+  }
+  setAutoPlay(true);
+})();

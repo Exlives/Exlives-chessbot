@@ -9,7 +9,7 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["activeTab", "debugger", "scripting", "windows", "system.display", "tabs"],
+  "permissions": ["activeTab", "debugger", "scripting", "windows", "system.display", "tabs", "storage"],
   "host_permissions": ["https://*.rekoroyun.com/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"

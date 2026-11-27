@@ -114,15 +114,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-async function getWindowLayout() {
+async function getWindowLayout(restoreSavedBounds = false) {
+  const settings = restoreSavedBounds
+    ? await chrome.storage.local.get(['chessbotWindowBounds', 'chessbotWindowMode'])
+    : {};
+  // The app always opens in the normal view. The mini/micro buttons remain
+  // available after launch, but the last compact mode is not restored.
+  const savedWindowMode = 'full';
+  const storedBounds = settings.chessbotWindowBounds;
+  const hasFlatBounds = storedBounds &&
+    [storedBounds.left, storedBounds.top, storedBounds.width, storedBounds.height].every(Number.isFinite);
+  const isNormalSize = bounds => bounds && bounds.width >= 320 && bounds.height >= 560;
+  // A legacy flat value may be the old mini/micro size. Only reuse it when
+  // it was explicitly saved while the app was in normal mode.
+  const savedBounds = hasFlatBounds
+    ? (settings.chessbotWindowMode === 'full' && isNormalSize(storedBounds) ? storedBounds : null)
+    : (isNormalSize(storedBounds?.[savedWindowMode]) ? storedBounds[savedWindowMode] : null);
   try {
     const displays = await chrome.system.display.getInfo();
-    const display = displays.find((item) => item.isPrimary) || displays[0];
+    const hasSavedBounds = savedBounds &&
+      [savedBounds.left, savedBounds.top, savedBounds.width, savedBounds.height].every(Number.isFinite);
+    const savedDisplay = hasSavedBounds && displays.find(({ workArea }) =>
+      savedBounds.left + savedBounds.width / 2 >= workArea.left &&
+      savedBounds.left + savedBounds.width / 2 < workArea.left + workArea.width &&
+      savedBounds.top + savedBounds.height / 2 >= workArea.top &&
+      savedBounds.top + savedBounds.height / 2 < workArea.top + workArea.height);
+    const display = savedDisplay || displays.find((item) => item.isPrimary) || displays[0];
     const area = display?.workArea;
     if (area) {
-      const width = Math.min(520, Math.max(320, area.width - 24));
-      const height = Math.min(1000, Math.max(560, area.height));
-      return { width, height, left: area.left + area.width - width, top: area.top };
+      if (hasSavedBounds) {
+        const width = Math.min(Math.max(180, savedBounds.width), area.width);
+        const height = Math.min(Math.max(88, savedBounds.height), area.height);
+        return {
+          width,
+          height,
+          left: Math.min(Math.max(savedBounds.left, area.left), area.left + area.width - width),
+          top: Math.min(Math.max(savedBounds.top, area.top), area.top + area.height - height)
+        };
+      }
+      const { width, height } = savedWindowMode === 'micro'
+        ? { width: 230, height: 88 }
+        : savedWindowMode === 'mini'
+          ? { width: Math.max(180, Math.min(320, area.width - 16)), height: 190 }
+          : {
+              width: Math.min(520, Math.max(320, area.width - 24)),
+              height: Math.min(1000, Math.max(560, area.height))
+            };
+      const safeWidth = Math.min(width, area.width);
+      const safeHeight = Math.min(height, area.height);
+      return {
+        width: safeWidth,
+        height: safeHeight,
+        left: area.left + area.width - safeWidth,
+        top: area.top
+      };
     }
   } catch { /* Use the browser's default placement if display info is unavailable. */ }
   return {};
@@ -153,13 +198,13 @@ chrome.action.onClicked.addListener(async (tab) => {
       const appTab = existing.tabs.find((item) => /(?:popup|okey)\.html/.test(item.url || ''));
       if (appTab?.id != null) await chrome.tabs.update(appTab.id, { url: `${appUrl}${target}` });
     }
-    await chrome.windows.update(existing.id, { focused: true, ...await getWindowLayout() });
+    await chrome.windows.update(existing.id, { focused: true });
     return;
   }
   await chrome.windows.create({
     url: `${appUrl}${target}`,
     type: 'popup',
     focused: true,
-    ...await getWindowLayout()
+    ...await getWindowLayout(!okeyTab)
   });
 });

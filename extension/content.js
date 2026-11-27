@@ -5,15 +5,33 @@ let watchedBoard = null;
 let boardMutationObserver = null;
 let boardReplacementObserver = null;
 let boardChangeQueued = false;
+let extensionContextInvalid = false;
+
+function stopBoardObservers() {
+  boardMutationObserver?.disconnect();
+  boardReplacementObserver?.disconnect();
+  boardMutationObserver = null;
+  boardReplacementObserver = null;
+}
 
 function notifyBoardChanged() {
-  if (boardChangeQueued) return;
+  if (extensionContextInvalid || boardChangeQueued) return;
   boardChangeQueued = true;
   queueMicrotask(() => {
     boardChangeQueued = false;
-    chrome.runtime.sendMessage({ type: 'CHESS_BOARD_CHANGED' }, () => {
-      void chrome.runtime.lastError;
-    });
+    if (extensionContextInvalid) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'CHESS_BOARD_CHANGED' }, () => {
+        // Reading lastError prevents an unhandled callback warning when the
+        // service worker is stopping or the extension is being reloaded.
+        void chrome.runtime.lastError;
+      });
+    } catch {
+      // A page can retain an old content script briefly after chrome://extensions
+      // reloads the extension. Stop observing instead of repeatedly throwing.
+      extensionContextInvalid = true;
+      stopBoardObservers();
+    }
   });
 }
 
